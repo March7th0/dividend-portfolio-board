@@ -7,7 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions: {}
+# 最小可用权限:contents:read 是 checkout 私有仓的下限——写成 {} 在私有仓会
+# "Repository not found"(公开仓匿名可读所以看不出来),别改回 {}
+permissions:
+  contents: read
 
 jobs:
   test:
