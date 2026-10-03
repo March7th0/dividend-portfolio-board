@@ -1,6 +1,7 @@
 # dividend-portfolio-board · 长期股息投资组合进度看板
 
-> 🌐 **在线试用（开箱即用）**：<https://march7th0.github.io/dividend-portfolio-board/>
+> 🌐 **在线试用（开箱即用，点开即用）**：<https://march7th0.github.io/dividend-portfolio-board/portfolio-workbench.html>
+> 短链 <https://march7th0.github.io/dividend-portfolio-board/> 会自动跳到同一页面；
 > 下载 `portfolio-workbench.html` 双击打开，效果完全相同——数据都只存在你自己浏览器的 localStorage。
 
 一个**单文件 HTML 应用**：为「长期股息型组合」的定投执行而做的作战台。
