@@ -1,0 +1,145 @@
+{
+ "database_id": "RZJijiIkrKlwRQExwHjH0y",
+ "properties": [
+  {
+   "id": "3Vjl29k3",
+   "name": "标的名称",
+   "type": "text"
+  },
+  {
+   "id": "L1gxjhwj",
+   "name": "代码",
+   "type": "text"
+  },
+  {
+   "id": "2k7S2vhe",
+   "name": "企业类型",
+   "type": "select"
+  },
+  {
+   "id": "YguHSJh7",
+   "name": "当前价格",
+   "type": "number"
+  },
+  {
+   "id": "Qzx9NCef",
+   "name": "内在价值",
+   "type": "number"
+  },
+  {
+   "id": "T7Zqnfz1",
+   "name": "估值区间低",
+   "type": "number"
+  },
+  {
+   "id": "nfWxTRuF",
+   "name": "估值区间高",
+   "type": "number"
+  },
+  {
+   "id": "yePjd9Md",
+   "name": "估值判定",
+   "type": "select"
+  },
+  {
+   "id": "Z7uxfY1g",
+   "name": "跟踪状态",
+   "type": "select"
+  },
+  {
+   "id": "1JsEtMkd",
+   "name": "关注度",
+   "type": "select"
+  },
+  {
+   "id": "WIQCVuaU",
+   "name": "持仓成本",
+   "type": "number"
+  },
+  {
+   "id": "no4cq892",
+   "name": "持仓数量",
+   "type": "number"
+  },
+  {
+   "id": "RZDwKiR8",
+   "name": "最近更新",
+   "type": "date"
+  },
+  {
+   "id": "qaF2GwOb",
+   "name": "备注",
+   "type": "text"
+  },
+  {
+   "id": "LlK1Cbnr",
+   "name": "正常定投上限",
+   "type": "number"
+  },
+  {
+   "id": "miEVrB5Y",
+   "name": "组合层级",
+   "type": "select"
+  },
+  {
+   "id": "483sVEOm",
+   "name": "加倍买入价",
+   "type": "number"
+  },
+  {
+   "id": "JdbZCt3n",
+   "name": "减仓起始价",
+   "type": "number"
+  },
+  {
+   "id": "XL6noZBB",
+   "name": "目标仓位",
+   "type": "number"
+  },
+  {
+   "id": "B84oabNt",
+   "name": "一手股数",
+   "type": "number"
+  },
+  {
+   "id": "F48rWfuX",
+   "name": "买入逻辑",
+   "type": "text"
+  },
+  {
+   "id": "273PvLhs",
+   "name": "加仓触发",
+   "type": "text"
+  },
+  {
+   "id": "VhkfOhaK",
+   "name": "风险点",
+   "type": "text"
+  },
+  {
+   "id": "fUbLcG7k",
+   "name": "参考股息率",
+   "type": "number"
+  },
+  {
+   "id": "QaDyewHg",
+   "name": "MA20",
+   "type": "number"
+  },
+  {
+   "id": "LfIpljw0",
+   "name": "MA60",
+   "type": "number"
+  },
+  {
+   "id": "jOISz8s0",
+   "name": "RSI14",
+   "type": "number"
+  },
+  {
+   "id": "SCGUEIa7",
+   "name": "技术面提醒",
+   "type": "text"
+  }
+ ]
+}
