@@ -77,6 +77,10 @@ a{color:var(--ac)}
   white-space:nowrap;font-family:inherit;cursor:pointer;transition:border-color .12s}
 .stat-sync:hover{border-color:var(--ac);color:var(--tx2)}
 .stat-sync.off{border-color:var(--br);color:var(--br)}
+/* ★ R71 数据源按钮:SDK(WorkBuddy)模式下隐藏,独立/演示/GitHub 模式显示 */
+#ghBtn{display:none}
+#ghBtn.show{display:flex}
+#ghBtn.on{border-color:var(--dn);color:var(--dn)}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--tx3);flex:0 0 auto}
 .dot.ok{background:var(--dn)} .dot.load{background:var(--br)} .dot.off{background:#c2c8d4}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -877,6 +881,7 @@ table.card{min-width:0}
     <button data-page-node-id="iccfaGRHlS2NfPFnoRXiLc" class="stat-sync" id="syncBox" title="点击重新连接数据源" type="button">
       <span data-page-node-id="sIWBI2NU6iQ5jz4R3tE9Oq" class="dot load" id="syncDot"></span><span data-page-node-id="eDQ8iTYBX6HUHnQINPR0k9" id="syncTxt"><!--pnid:i1ypubABTranVtyzdE0S9q-->连接中</span>
     </button>
+    <button class="stat-sync" id="ghBtn" title="数据源设置（GitHub 真实数据 / 演示模式切换）" type="button">⚡数据源</button>
     <!-- ★ 页面版本标签：用于「你看到的到底是哪一版」当场对齐，避免版本混淆
          （样式在 #verTag CSS 块里 —— 内联样式会让窄屏媒体查询无法覆盖，R60 教训） -->
     <span id="verTag" title="页面版本（若与最新版不一致，请强刷：电脑 Ctrl+F5 / 手机清缓存）"></span>
@@ -975,6 +980,7 @@ table.card{min-width:0}
   <div data-page-node-id="AWPHpIpoukotfkwNLzzaaB" class="buysheet" id="fundSheet"></div>
   <!-- ★ 页面内确认弹层容器（替代 window.confirm，见 askConfirm 注释） -->
   <div class="buysheet" id="confirmSheet"></div>
+    <div class="buysheet" id="ghSheet"></div>
 
   <!--pnid:jteDp5zpRmTuqgG7ycyTnJ--><!-- 建仓路线 -->
   <section data-page-node-id="o4Lc5cpVJ6ddaey7gZCog7" class="pane" id="pane-route">
@@ -1882,6 +1888,8 @@ function initSdk(){
   var found = detectDb();
   if (found){
     db = found;
+    DATA_MODE = 'sdk';        /* ★ R71:模式标记的唯一权威点——bootstrap 直连 SDK 的路径
+                                 不经过 sdkConnected,漏标会让 hasDataSrc() 全线失灵 */
     sdkStopAll();
     return true;
   }
@@ -1895,12 +1903,17 @@ function sdkStopAll(){
 /* 探到 SDK 后的统一收尾：切在线 + 补拉全量 */
 function sdkConnected(){
   sdkStopAll();
+  ghStopPolling();                                   /* ★ R71:平台在场优先,停掉 GH 轮询 */
+  DATA_MODE = 'sdk';
+  ghBtnSync();
   sdkSlow = false;
   setSync('load', '同步中');
   bootstrap();
 }
 /* 离线降级渲染（探不到 SDK 时才走） */
 function goOffline(reason){
+  DATA_MODE = 'demo';
+  ghBtnSync();
   var c = cacheLoad();
   /* 走 normalize：缓存里可能缺 record_id，直接赋值会让所有池子串到 _id=undefined 上 */
   if (c.length) RECORDS = c.map(normalize);
@@ -1946,6 +1959,7 @@ function cacheLoad(){
 
 function bootstrap(){
   if (!initSdk()){
+    if (ghIsReady()){ useGhSource(); return; }      /* ★ R71:GitHub 数据源优先于离线 */
     /* 先渲染本地缓存让页面可用，同时挂起探测等待 SDK 迟到 */
     goOffline('离线模式（等待连接…）');
     watchSdk();
@@ -1975,7 +1989,7 @@ function bootstrap(){
 function loadAll(startCursor, acc, guard, opts){
   acc = acc || [];
   guard = guard || 0;
-  if (!initSdk()){
+  if (!hasDataSrc()){
     goOffline('离线模式（等待连接…）');
     watchSdk();
     return;
@@ -2077,6 +2091,386 @@ function reloadFollowsRemote(){
     ensureFollowDefaults();
     refreshAll();
   });
+}
+
+/* ===================== ★ R71 GitHub 数据源适配器 =====================
+   需求:脱离 WorkBuddy 认证,在 GitHub 托管的页面上直接看用真实数据(用户日常入口迁移)。
+   数据存放:私有数据仓(dividend-portfolio-data),JSON 文件 = 真相源:
+     data/records.json              估值表(含 _id;整文件写,冲突按「最近更新」逐条合并)
+     data/state/<键编码>.json       状态表(键中 ':'→'__',独立文件 = R43 隔离语义)
+   接口:实现与平台 SDK 一致的 getSchema/query/addRecord/updateRecord/onUpdated;
+   写 = Contents API 提交(每笔自带 commit 审计);轮询目录 sha 近实时感知他人改动;
+   并发写冲突(409)= 重取远端 → 按时间合并 → 重试(最多 3 次)。
+   优先级:平台 SDK > GitHub 数据源(本机有 token) > 演示/离线。token 只存本机 localStorage。 */
+var DATA_MODE = 'none';                    /* sdk | gh | demo */
+function hasDataSrc(){ return DATA_MODE === 'sdk' || DATA_MODE === 'gh'; }
+var GH_KEY_TOKEN = 'dpb_gh_token', GH_KEY_REPO = 'dpb_gh_repo';
+var GH_DEFAULT_REPO = 'March7th0/dividend-portfolio-data';
+var GH_POLL_MS = 45000;
+var ghCb = null, ghTimer = null, ghLastShas = null;
+function ghLoadConf(){
+  var t = '', r = GH_DEFAULT_REPO;
+  try {
+    t = localStorage.getItem(GH_KEY_TOKEN) || '';
+    r = localStorage.getItem(GH_KEY_REPO) || GH_DEFAULT_REPO;
+  } catch (e) {}
+  return { token: t, repo: r };
+}
+function ghSaveConf(token, repo){
+  try {
+    if (token) localStorage.setItem(GH_KEY_TOKEN, token); else localStorage.removeItem(GH_KEY_TOKEN);
+    if (repo) localStorage.setItem(GH_KEY_REPO, repo);
+  } catch (e) {}
+}
+function ghIsReady(){ return !!ghLoadConf().token; }
+function ghEncodeKey(k){ return String(k).replace(/:/g, '_'); }   /* POOLS::blink → POOLS__blink(::=两个冒号→两个下划线,可读且无歧义) */
+function ghFlattenProps(props){
+  var o = {};
+  for (var k in props){
+    if (!Object.prototype.hasOwnProperty.call(props, k)) continue;
+    var v = props[k];
+    if (v && typeof v === 'object'){
+      if ('text' in v) o[k] = v.text;
+      else if ('select' in v) o[k] = v.select;
+      else if ('number' in v) o[k] = v.number;
+      else if ('date' in v) o[k] = v.date;
+      else o[k] = v;
+    } else o[k] = v;
+  }
+  return o;
+}
+function ghB64(str){ return btoa(unescape(encodeURIComponent(str))); }
+function ghUnb64(b64){ return decodeURIComponent(escape(atob(String(b64).replace(/\s/g, '')))); }
+function ghFetch(url, opts){
+  if (typeof fetch === 'function') return fetch(url, opts);
+  return Promise.reject(new Error('当前浏览器不支持 fetch,无法使用 GitHub 数据源'));
+}
+function ghHeaders(raw){
+  var c = ghLoadConf();
+  return {
+    'Authorization': 'token ' + c.token,
+    'Accept': raw ? 'application/vnd.github.raw' : 'application/vnd.github+json',
+    'User-Agent': 'portfolio-workbench'
+  };
+}
+function ghErr(status, msg){ return { ghError: true, status: status, message: msg || ('HTTP ' + status) }; }
+function ghGetContents(path){
+  var c = ghLoadConf();
+  var url = 'https://api.github.com/repos/' + c.repo + '/contents/' + path + '?ref=main';
+  return ghFetch(url, { headers: ghHeaders(false) }).then(function(r){
+    if (r.status === 404) return null;
+    if (r.status === 401 || r.status === 403) throw ghErr(r.status, 'GitHub 凭证无效或权限不足(HTTP ' + r.status + ')');
+    if (!r.ok) throw ghErr(r.status, 'GitHub API ' + r.status);
+    return r.json().then(function(j){
+      return { sha: j.sha,
+               text: (typeof j.content === 'string') ? ghUnb64(j.content) : '',
+               json: j };
+    });
+  }, function(e){ throw (e && e.ghError) ? e : ghErr(0, (e && e.message) || '网络错误'); });
+}
+function ghGetJson(path){ return ghGetContents(path); }   /* 语义别名:目录/单文件一律 JSON 信封 */
+function ghGetRaw(path){
+  var c = ghLoadConf();
+  return ghFetch('https://api.github.com/repos/' + c.repo + '/contents/' + path + '?ref=main',
+    { headers: ghHeaders(true) }).then(function(r){
+    if (r.status === 404) return null;
+    if (r.status === 401 || r.status === 403) throw ghErr(r.status, 'GitHub 凭证无效或权限不足');
+    if (!r.ok) throw ghErr(r.status, 'GitHub API ' + r.status);
+    return r.text();
+  }, function(e){ throw (e && e.ghError) ? e : ghErr(0, (e && e.message) || '网络错误'); });
+}
+function ghPutFile(path, text, message, sha){
+  var c = ghLoadConf();
+  var body = { message: message, content: ghB64(text), branch: 'main' };
+  if (sha) body.sha = sha;
+  return ghFetch('https://api.github.com/repos/' + c.repo + '/contents/' + path,
+    { method: 'PUT', headers: {
+        'Authorization': 'token ' + c.token, 'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json', 'User-Agent': 'portfolio-workbench'
+      }, body: JSON.stringify(body) }).then(function(r){
+    if (r.status === 409) return { conflict: true };
+    if (r.status === 401 || r.status === 403) throw ghErr(r.status, 'GitHub 凭证无效或权限不足');
+    if (!r.ok) throw ghErr(r.status, 'GitHub 写入 ' + r.status);
+    return r.json().then(function(j){ return { ok: true, sha: j.content && j.content.sha }; });
+  }, function(e){ throw (e && e.ghError) ? e : ghErr(0, (e && e.message) || '网络错误'); });
+}
+/* records.json:读 + 安全写(409 冲突 → 重取远端 → 按「最近更新」逐条合并 → 重试 ×3) */
+function ghGetRecords(){
+  return ghGetRaw('data/records.json').then(function(t){
+    if (t === null || !t.trim()) return [];
+    try { var a = JSON.parse(t); return Array.isArray(a) ? a : []; } catch (e) { throw ghErr(0, 'data/records.json 解析失败:' + e.message); }
+  });
+}
+function ghNewer(a, b){                      /* ISO 字符串比较;空值视为最旧 */
+  var va = (a && a[F.updated]) || '', vb = (b && b[F.updated]) || '';
+  return String(va) >= String(vb);
+}
+function ghMergeRecords(base, remote){       /* 远端并入本地草稿:按 _id,较新者胜 */
+  var merged = base.slice();
+  for (var i = 0; i < remote.length; i++){
+    var found = null;
+    for (var j = 0; j < merged.length; j++) if (merged[j]._id === remote[i]._id){ found = merged[j]; break; }
+    if (!found) merged.push(remote[i]);
+    else if (!ghNewer(found, remote[i])) merged[j] = remote[i];
+  }
+  return merged;
+}
+function ghAttemptPutRecords(remaining, sha, recs, message){
+  return ghPutFile('data/records.json', JSON.stringify(recs), message, sha).then(function(res){
+    if (res.conflict && remaining > 0){
+      return ghGetContents('data/records.json').then(function(cur){
+        var remote = [];
+        try { remote = JSON.parse(cur.text) || []; } catch (e) { remote = []; }
+        return ghAttemptPutRecords(remaining - 1, cur.sha, ghMergeRecords(recs, remote), message);
+      });
+    }
+    return res;
+  });
+}
+/* records.json 写合并队列:同一 tick 内的多笔操作合并为一次提交(如 fullReset 批量清零) */
+var ghRecOps = [], ghRecTimer = null;
+function ghCommitRecords(op){
+  return new Promise(function(resolve){
+    ghRecOps.push({ op: op, resolve: resolve });
+    if (ghRecTimer) clearTimeout(ghRecTimer);
+    ghRecTimer = setTimeout(ghFlushRecords, 400);
+  });
+}
+function ghFlushRecords(){
+  var ops = ghRecOps; ghRecOps = []; ghRecTimer = null;
+  if (!ops.length) return;
+  ghGetContents('data/records.json').then(function(cur){
+    var recs = [];
+    try { recs = JSON.parse(cur.text) || []; } catch (e) { recs = []; }
+    for (var i = 0; i < ops.length; i++){
+      var o = ops[i].op, hit = null;
+      for (var j = 0; j < recs.length; j++) if (recs[j]._id === o.id){ hit = recs[j]; break; }
+      if (o.type === 'add' && !hit) recs.push(o.flat);
+      else if (hit){ for (var k in o.flat) if (Object.prototype.hasOwnProperty.call(o.flat, k)) hit[k] = o.flat[k]; }
+    }
+    return ghAttemptPutRecords(3, cur.sha, recs,
+      '数据源:更新 ' + ops.length + ' 条记录(' + DATA_MODE + ')');
+  }).then(function(){
+    for (var i = 0; i < ops.length; i++) ops[i].resolve({ ok: true });
+  }, function(e){
+    for (var i = 0; i < ops.length; i++) ops[i].resolve({ ok: false, e: e });
+  });
+}
+function ghStatePath(key){ return 'data/state/' + ghEncodeKey(key) + '.json'; }
+function ghStateRead(key){
+  return ghGetJson(ghStatePath(key)).then(function(res){
+    if (!res) return null;
+    var o = null;
+    try { o = JSON.parse(res.text); } catch (e) { o = null; }
+    return (o && typeof o === 'object') ? o : null;
+  });
+}
+function ghStateWrite(key, payload, ts){
+  var body = { '键': key, '数据': payload, '更新时间': ts };
+  return ghPutFile(ghStatePath(key), JSON.stringify(body, null, 1), '状态:' + key, null).then(function(res){
+    if (res.conflict){                                    /* 冲突:按 更新时间 保留较新 */
+      return ghGetJson(ghStatePath(key)).then(function(cur){
+        if (!cur) return res;
+        var curBody = null;
+        try { curBody = JSON.parse(cur.text); } catch (e) { curBody = null; }
+        var curTs = (curBody && curBody['更新时间']) || '', newTs = ts;
+        if (String(curTs) > String(newTs)) return { ok: true, kept: 'remote' };
+        return ghPutFile(ghStatePath(key), JSON.stringify(body, null, 1), '状态:' + key + '(重试)', cur.sha);
+      });
+    }
+    return res;
+  });
+}
+function ghAdapter(){
+  return {
+    getSchema: function(){ return Promise.resolve({ properties: [] }); },
+    query: function(opts){
+      var id = opts && opts.databaseId;
+      if (id === DATABASE_ID){
+        return ghGetRecords().then(function(recs){ return { results: recs, hasMore: false }; });
+      }
+      if (id === 'gkfII6uQEsbgZHkbLCmAdl'){
+        return ghGetContents('data/state').then(function(list){
+          if (!list || !list.json || !Array.isArray(list.json)) return { results: [], hasMore: false };
+          var files = [], i;
+          for (i = 0; i < list.json.length; i++){
+            var e = list.json[i];
+            if (e.type === 'file' && /\.json$/.test(e.name)) files.push(e);
+          }
+          return Promise.all(files.map(function(f){
+            return ghGetJson('data/state/' + f.name).then(function(res){
+              if (!res) return null;
+              var body = null;
+              try { body = JSON.parse(res.text); } catch (e2) { body = null; }
+              if (!body || !body['键']) return null;
+              var rid = 'gh_' + f.name.replace(/\.json$/, '');
+              return { record_id: rid, '键': body['键'],
+                       '数据': (typeof body['数据'] === 'string') ? body['数据'] : JSON.stringify(body['数据'] || {}),
+                       '更新时间': body['更新时间'] || '' };
+            });
+          })).then(function(arr){
+            var out = [];
+            for (var i = 0; i < arr.length; i++) if (arr[i]) out.push(arr[i]);
+            return { results: out, hasMore: false };
+          });
+        });
+      }
+      return Promise.resolve({ results: [], hasMore: false });
+    },
+    addRecord: function(opts){
+      var id = opts && opts.databaseId;
+      var flat = ghFlattenProps(opts && opts.properties || {});
+      if (id === DATABASE_ID){
+        var rid = 'gh' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+        flat._id = rid;
+        if (!flat[F.updated]) flat[F.updated] = todayISO();
+        return ghCommitRecords({ type: 'add', id: rid, flat: flat }).then(function(res){
+          if (res && res.ok === false) throw res.e || ghErr(0, '写入失败');
+          return { record_id: rid };
+        });
+      }
+      if (id === 'gkfII6uQEsbgZHkbLCmAdl'){
+        var key = (flat['键'] || '') + '';
+        var ts = flat['更新时间'] || new Date().toISOString();
+        var payload = (typeof flat['数据'] === 'string') ? JSON.parse(flat['数据']) : (flat['数据'] || {});
+        return ghStateWrite(key, payload, ts).then(function(){ return { record_id: 'gh_' + ghEncodeKey(key) }; });
+      }
+      return Promise.resolve({ record_id: '' });
+    },
+    updateRecord: function(opts){
+      var id = opts && opts.databaseId;
+      var flat = ghFlattenProps(opts && opts.properties || {});
+      if (id === DATABASE_ID){
+        var rid = opts.recordId;
+        return ghCommitRecords({ type: 'upd', id: rid, flat: flat }).then(function(res){
+          if (res && res.ok === false) throw res.e || ghErr(0, '写入失败');
+          return { ok: 1 };
+        });
+      }
+      if (id === 'gkfII6uQEsbgZHkbLCmAdl'){
+        var key = (flat['键'] || '') + '';
+        var ts = flat['更新时间'] || new Date().toISOString();
+        var payload = (typeof flat['数据'] === 'string') ? JSON.parse(flat['数据']) : (flat['数据'] || {});
+        return ghStateWrite(key, payload, ts).then(function(){ return { ok: 1 }; });
+      }
+      return Promise.resolve({ ok: 1 });
+    },
+    onUpdated: function(cb){ ghCb = cb; ghStartPolling(); }
+  };
+}
+function ghStartPolling(){
+  if (ghTimer) return;
+  ghTimer = setInterval(ghPollOnce, GH_POLL_MS);
+}
+function ghPollOnce(){
+    var c = ghLoadConf();
+    if (!c.token){ return; }
+    ghFetch('https://api.github.com/repos/' + c.repo + '/contents/data?ref=main',
+      { headers: ghHeaders(false) }).then(function(r){
+      if (r.status === 304 || !r.ok) return;
+      return r.json().then(function(list){
+        var shas = {}, i;
+        for (i = 0; i < list.length; i++){
+          shas[list[i].path] = list[i].sha;
+          if (list[i].type === 'dir' && list[i].name === 'state'){
+            shas[list[i].path] = list[i].sha;     /* 目录级 sha:任何内容变动都会变 */
+          }
+        }
+        if (ghLastShas && ghCb){
+          var ids = [];
+          if (shas['data/records.json'] !== ghLastShas['data/records.json']) ids.push(DATABASE_ID);
+          if (shas['data/state'] !== ghLastShas['data/state']) ids.push('gkfII6uQEsbgZHkbLCmAdl');
+          if (ids.length) ghCb({ databaseIds: ids });
+        }
+        ghLastShas = shas;
+      });
+    }).catch(function(){ /* 轮询失败静默,下个周期重试 */ });
+}
+function ghStopPolling(){ if (ghTimer){ clearInterval(ghTimer); ghTimer = null; } ghCb = null; }
+/* 接入既有事件链:与 subscribeUpdates 相同的分流(估值表重载 / 关注层重载) */
+function ghSubscribe(){
+  ghAdapter().onUpdated(function(payload){
+    if (isSelfWriteEcho()) return;
+    var ids = (payload && payload.databaseIds) || [];
+    for (var i = 0; i < ids.length; i++){
+      if (ids[i] === DATABASE_ID){ loadAll(null, null, 0, { skipState: true }); return; }
+      if (ids[i] === 'gkfII6uQEsbgZHkbLCmAdl'){ reloadFollowsRemote(); return; }
+    }
+  });
+}
+/* 启用 GitHub 数据源(bootstrap 无 SDK 且有 token 时 / 面板保存时) */
+function useGhSource(){
+  var c = ghLoadConf();
+  if (!c.token){ ghOpenPanel(); return; }
+  sdkStopAll();
+  DATA_MODE = 'gh';
+  db = ghAdapter();
+  ghLastShas = null;
+  ghSubscribe();
+  setSync('load', 'GitHub 数据源 · 同步中');
+  fillSelects();
+  loadAll();
+  toast('已切换到 GitHub 数据源(仓:' + c.repo + ')');
+  ghBtnSync();
+}
+function ghDropSource(){
+  ghSaveConf('', '');
+  ghStopPolling();
+  db = null;
+  DATA_MODE = 'demo';
+  goOffline('本地演示模式(无数据源)');
+  ghBtnSync();
+}
+/* 数据源设置面板(独立小弹层,复用 bs-* 视觉) */
+function ghOpenPanel(){
+  var c = ghLoadConf();
+  var host = $('ghSheet');
+  if (!host) return;
+  host.innerHTML = sanitizeHtml(
+    '<div class="bs-mask" id="ghMask">' + LT + '/div>' +
+    '<div class="bs-card" style="max-width:460px">' +
+      '<div class="bs-h"><b>数据源设置(GitHub)</b></div>' +
+      '<div class="bs-b">' +
+        '<div style="font-size:12.5px;color:var(--tx2);line-height:1.7">' +
+          '在此粘贴 GitHub 细粒度 token(仅数据仓、Contents 读写),即可脱离 WorkBuddy 认证直接使用真实数据。' +
+          'token 只保存在本机浏览器,不会上传到任何其他地方。' + LT + '/div>' +
+        '<div style="margin-top:10px"><input id="ghIn_repo" class="bs-in" style="width:100%" placeholder="仓库名(如 March7th0/dividend-portfolio-data)" value="' + esc(c.repo) + '">' + LT + '/div>' +
+        '<div style="margin-top:8px"><input id="ghIn_token" class="bs-in" type="password" style="width:100%" placeholder="粘贴 token(github_pat_… 或 gho_…)" value="' + esc(c.token) + '">' + LT + '/div>' +
+        '<div id="ghTestOut" style="margin-top:8px;font-size:12px;color:var(--tx2)">' + LT + '/div>' +
+      '' + LT + '/div>' +
+      '<div class="bs-f">' +
+        '<button class="btn" id="ghClose">取消' + LT + '/button>' +
+        '<button class="btn warn" id="ghDropBtn">断开(回演示)' + LT + '/button>' +
+        '<button class="btn pri" id="ghSaveBtn">保存并连接' + LT + '/button>' +
+      '' + LT + '/div>' +
+    '' + LT + '/div>');
+  host.style.display = 'block';
+  var close = function(){ host.style.display = 'none'; host.innerHTML = ''; };
+  $('ghMask').onclick = close;
+  $('ghClose').onclick = close;
+  $('ghDropBtn').onclick = function(){ ghDropSource(); close(); };
+  $('ghSaveBtn').onclick = function(){
+    var repo = $('ghIn_repo').value.trim() || GH_DEFAULT_REPO;
+    var tok = $('ghIn_token').value.trim();
+    if (!tok){ $('ghTestOut').textContent = '请先粘贴 token'; return; }
+    ghSaveConf(tok, repo);
+    $('ghTestOut').textContent = '连接中…';
+    ghFetch('https://api.github.com/repos/' + repo, { headers: ghHeaders(false) }).then(function(r){
+      if (r.status === 401 || r.status === 403){ $('ghTestOut').textContent = 'token 无效或权限不足'; return; }
+      if (r.status === 404){ $('ghTestOut').textContent = '仓库不存在或 token 未覆盖该仓'; return; }
+      if (!r.ok){ $('ghTestOut').textContent = 'GitHub API ' + r.status; return; }
+      useGhSource();
+      close();
+    }, function(e){ $('ghTestOut').textContent = '网络错误:' + ((e && e.message) || e); });
+  };
+}
+/* 数据源模式切换时同步顶栏小按钮可见性(SDK 模式隐藏) */
+function ghBtnSync(){
+  var b = $('ghBtn');
+  if (!b) return;
+  if (DATA_MODE === 'sdk') b.className = 'stat-sync gh';
+  else if (DATA_MODE === 'gh') b.className = 'stat-sync gh show on';
+  else b.className = 'stat-sync gh show';
 }
 function normalize(r){
   var o = { _id: r.record_id };
@@ -4996,7 +5390,7 @@ function ensureFollowDefaults(){
    查询失败返回 null（与旧 cloudLoadState 的 catch→false 语义对齐）。 */
 function queryStateAll(startCursor, acc, guard){
   acc = acc || []; guard = guard || 0;
-  if (!initSdk()) return Promise.resolve(acc);
+  if (!hasDataSrc()) return Promise.resolve(acc);
   if (guard > 100) return Promise.resolve(acc);
   return db.query({ databaseId: 'gkfII6uQEsbgZHkbLCmAdl', pageSize: 100, startCursor: startCursor })
     .then(function(res){
@@ -5049,7 +5443,7 @@ function exportHoldings(){
 /* 把当前档案的账推到云端（默认 900ms 防抖；opts.immediate=true 时立即写并返回 Promise）
    离线只存本地，重连后由 cloudLoadState 裁决。 */
 function cloudSaveState(opts){
-  if (!initSdk()) return null;                  /* 离线：只存本地，重连后由 cloudLoadState 裁决 */
+  if (!hasDataSrc()) return null;                  /* 无数据源：只存本地，重连后由 cloudLoadState 裁决 */
   var immediate = !!(opts && opts.immediate);
   /* ★ 在【调用时】就锁定档案与数据快照。若放到 900ms 后的回调里再读
      PROFILE.current / POOLS，期间用户切换档案的话，这笔账会被写到别人的档案里。 */
@@ -5094,7 +5488,7 @@ function cloudSaveState(opts){
   if (stateSaveTimer) clearTimeout(stateSaveTimer);
   stateSaveTimer = setTimeout(function(){
     stateSaveTimer = null;
-    if (!initSdk() || stateSaving) return;      /* 有请求在飞就丢弃本次（防抖语义，仅用于普通编辑） */
+    if (!hasDataSrc() || stateSaving) return;      /* 有请求在飞就丢弃本次（防抖语义，仅用于普通编辑） */
     stateSaving = true;
     writeAll().then(function(){ stateSaving = false; }, function(){ stateSaving = false; });
   }, 900);
@@ -5102,7 +5496,7 @@ function cloudSaveState(opts){
 }
 
 function cloudLoadState(){
-  if (!initSdk()) return Promise.resolve(false);
+  if (!hasDataSrc()) return Promise.resolve(false);
   /* ★ R62：改走 queryStateAll 分页续拉 —— 关注记录加入后 50 条/页会截断数据 */
   return queryStateAll().then(function(rows){
     if (rows === null) return false;          /* 查询失败：与旧 catch→false 语义一致 */
@@ -6768,7 +7162,7 @@ function doSave(){
     }
   }
   var btn = $('btnSave');
-  if (!initSdk()){
+  if (!hasDataSrc()){
     toast('尚未连接数据源，已先存到本地；连上后会自动同步', true);
     if (isUpdate) updateLocal(ex._id, props);
     else {
@@ -7009,7 +7403,7 @@ function doBulk(){
     jobs.push({ id: rec._id, name: rec[F.name], price: val });
   }
   if (!jobs.length){ toast('没有匹配到标的，请检查代码或名称', true); return; }
-  if (!initSdk()){
+  if (!hasDataSrc()){
     for (var a = 0; a < jobs.length; a++){
       updateLocal(jobs[a].id, makePriceProps(jobs[a].price));
     }
@@ -7058,7 +7452,9 @@ function buildBackupPack(){
   var clean = [];
   for (var i = 0; i < RECORDS.length; i++){
     var r = RECORDS[i], o = {};
-    for (var k in r) if (k !== '_id') o[k] = r[k];
+    /* ★ R71:_id 保留入备份 —— 跨环境桥接(WorkBuddy ⇄ GitHub 数据仓)必须靠稳定 id
+       关联资金池/持仓;WorkBuddy 版导入时 applyImport 按名称匹配,此键被忽略,向后兼容。 */
+    for (var k in r) o[k] = r[k];
     clean.push(o);
   }
   /* 账本数据：以 STATE_CACHE（多档案快照）为基础，用【当前档案的实时内存值】覆盖对应格子，
@@ -7142,7 +7538,7 @@ function applyImport(arr, state){
   /* ★ R45：先恢复账本（资金池/流水/持仓/档案），再导估值表 ——
      账本恢复是"覆盖式"的，先做它可以让后续的资产核算基于正确的基础。 */
   if (state) applyStateImport(state);
-  if (!initSdk()){
+  if (!hasDataSrc()){
     for (var i = 0; i < arr.length; i++){
       var o = arr[i], ex = findByName(o[F.name]);
       if (ex) { for (var k in o) if (k !== '_id') ex[k] = o[k]; }
@@ -7345,6 +7741,7 @@ function bindEvents(){
   var pk = $('pkSearch'); if (pk) pk.addEventListener('input', renderPicker);
   var bb = $('btnBulk'); if (bb) bb.addEventListener('click', doBulk);
   var sb = $('syncBox'); if (sb) sb.addEventListener('click', retrySync);
+  var gb = $('ghBtn'); if (gb) gb.addEventListener('click', ghOpenPanel);   /* ★ R71 数据源面板 */
   var be = $('btnExport'); if (be) be.addEventListener('click', exportJson);
   var bi = $('btnImport'); if (bi) bi.addEventListener('click', function(){ $('fileImport').click(); });
   var th = $('btnTheme'); if (th) th.addEventListener('click', themeToggle);
