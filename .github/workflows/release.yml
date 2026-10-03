@@ -1,0 +1,33 @@
+name: 发布 Release
+
+# 推送 v* 标签即自动:打包应用 zip → 创建 Release 并上传附件
+# (与 jianyi-translate 仓库同一套发版规矩;改代码 → git tag vX.Y.Z → git push origin vX.Y.Z)
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 打包应用 zip
+        run: |
+          TAG=${GITHUB_REF_NAME}
+          mkdir -p "dividend-portfolio-board-${TAG}"
+          cp portfolio-workbench.html README.md LICENSE "dividend-portfolio-board-${TAG}/"
+          mkdir -p dist
+          zip -qr "dist/dividend-portfolio-board-${TAG}.zip" "dividend-portfolio-board-${TAG}"
+
+      - name: 创建 Release 并上传附件
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
+          make_latest: true

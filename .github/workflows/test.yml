@@ -1,0 +1,33 @@
+name: tests
+
+# push/PR 时自动跑全部 21 套件 / 916 项断言(与本地 tests/run_all.js 同一入口)
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node 24(与本地同版本)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 安装 jsdom(版本与本地一致)
+        run: |
+          mkdir -p .ci-deps
+          npm install --prefix .ci-deps jsdom@30.1.1
+
+      - name: 跑全部测试套件
+        env:
+          NODE_PATH: ${{ github.workspace }}/.ci-deps/node_modules
+        run: node tests/run_all.js
