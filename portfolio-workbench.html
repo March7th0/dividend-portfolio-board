@@ -77,10 +77,11 @@ a{color:var(--ac)}
   white-space:nowrap;font-family:inherit;cursor:pointer;transition:border-color .12s}
 .stat-sync:hover{border-color:var(--ac);color:var(--tx2)}
 .stat-sync.off{border-color:var(--br);color:var(--br)}
-/* ★ R71 数据源按钮:SDK(WorkBuddy)模式下隐藏,独立/演示/GitHub 模式显示 */
+/* ★ R71 数据源按钮:SDK(WorkBuddy)模式下隐藏,独立/演示/GitHub 模式显示;R73 简报按钮常驻 */
 #ghBtn{display:none}
 #ghBtn.show{display:flex}
 #ghBtn.on{border-color:var(--dn);color:var(--dn)}
+#briefBtn{display:flex}
 /* ★ R72 行情快照提示条:GitHub 数据源模式下有未应用行情时出现 */
 #marketBar{display:none;max-width:1180px;margin:12px auto 0;padding:0 16px}
 #marketBar .mbar{display:flex;align-items:center;gap:10px;background:var(--acbg);color:var(--ac);
@@ -896,6 +897,7 @@ table.card{min-width:0}
       <span data-page-node-id="sIWBI2NU6iQ5jz4R3tE9Oq" class="dot load" id="syncDot"></span><span data-page-node-id="eDQ8iTYBX6HUHnQINPR0k9" id="syncTxt"><!--pnid:i1ypubABTranVtyzdE0S9q-->连接中</span>
     </button>
     <button class="stat-sync" id="ghBtn" title="数据源设置（GitHub 真实数据 / 演示模式切换）" type="button">⚡数据源</button>
+    <button class="stat-sync" id="briefBtn" title="生成今日作战简报并复制" type="button">📋简报</button>
     <!-- ★ 页面版本标签：用于「你看到的到底是哪一版」当场对齐，避免版本混淆
          （样式在 #verTag CSS 块里 —— 内联样式会让窄屏媒体查询无法覆盖，R60 教训） -->
     <span id="verTag" title="页面版本（若与最新版不一致，请强刷：电脑 Ctrl+F5 / 手机清缓存）"></span>
@@ -981,6 +983,7 @@ table.card{min-width:0}
       <div data-page-node-id="KcAgkDSQPcWoVezluIIvsP" class="card wcard" id="poolWrap" style="margin-top:14px"></div>
       <div data-page-node-id="1u2ZLFzm5OEAsQyG5x2VMk" id="poolLogs" style="margin-top:14px"></div>
       <div data-page-node-id="hwE2UjNEVcERDI55YNktrs" class="card pad" id="poolRules" style="margin-top:14px"></div>
+      <div id="divsCard" style="margin-top:14px"></div>
     </div>
   </section>
 
@@ -1297,7 +1300,7 @@ var DATABASE_ID = 'RZJijiIkrKlwRQExwHjH0y';
    用途：用户与开发者能「当场对齐」看到的是哪一版。
    之前几轮反复出现「我这边测好了 / 你那边依旧无效」的拉扯，
    根因之一就是无法确认双方在看同一版代码 —— 有了这个标签，一句话就能定位。 */
-var APP_VER = 'v58 · R72 · 2026-10-04';
+var APP_VER = 'v59 · R73 · 2026-10-04';
 var F = {
   name:'标的名称', code:'代码', btype:'企业类型', tier:'组合层级',
   price:'当前价格', iv:'内在价值', low:'估值区间低', high:'估值区间高',
@@ -2558,6 +2561,145 @@ function ghMarketApply(){
     });
   });
 }
+/* ===================== ★ R73 股息账本 + 作战简报 =====================
+   股息账本:分红事件数组 [{id,date,code,name,amount,note}],存放为状态键 'DIVIDENDS'
+   (SDK 模式 → WorkBuddy 状态表;GH 模式 → 数据仓 data/state/DIVIDENDS.json,天然多端同步)。
+   作战简报:一键生成当日文本简报(可买/等回落/减仓档 + 资金与股息摘要)并复制到剪贴板。 */
+var DIVS = [];
+function divLoadFrom(o){ DIVS = Array.isArray(o) ? o : []; }
+function divYearSum(){
+  var y = String(new Date().getFullYear()), s = 0;
+  for (var i = 0; i < DIVS.length; i++) if (String(DIVS[i].date || '').indexOf(y) === 0) s += (num(DIVS[i].amount) || 0);
+  return s;
+}
+function divTotalSum(){
+  var s = 0;
+  for (var i = 0; i < DIVS.length; i++) s += (num(DIVS[i].amount) || 0);
+  return s;
+}
+function divSave(){
+  if (!hasDataSrc()){ toast('未连接数据源，账本改动暂存本页（刷新即失）', true); return; }
+  stateTouch();
+  upsertState('DIVIDENDS', JSON.stringify(DIVS), new Date().toISOString());
+}
+function renderDivsCard(){
+  var el = $('divsCard');
+  if (!el) return;
+  var tmv = totalMV();
+  var yr = divYearSum(), tot = divTotalSum();
+  var rate = (tmv > 0) ? (yr / tmv * 100) : null;
+  var byName = {};
+  for (var i = 0; i < DIVS.length; i++){
+    var nm = DIVS[i].name || '未知';
+    byName[nm] = (byName[nm] || 0) + (num(DIVS[i].amount) || 0);
+  }
+  var tops = Object.keys(byName).map(function(k){ return { n: k, v: byName[k] }; })
+    .sort(function(a, b){ return b.v - a.v; }).slice(0, 5);
+  var rows = DIVS.slice().sort(function(a, b){ return String(b.date).localeCompare(String(a.date)); });
+  var h = '<div class="card pad" style="margin-top:14px">';
+  h += '<div class="sec-h" style="margin:0 0 10px"><h2 style="font-size:15px">股息账本</h2>' +
+       '<span class="hint">每一笔分红都在这里 · 年度与累计自动汇总</span></div>';
+  h += '<div class="ov-grid" style="display:flex;gap:10px;flex-wrap:wrap">';
+  h += '<div class="ov"><div class="l">本年股息(' + new Date().getFullYear() + ')</div><div class="v mono" style="color:var(--dn)">' + money(yr) + '</div></div>';
+  h += '<div class="ov"><div class="l">累计股息</div><div class="v mono">' + money(tot) + '</div></div>';
+  h += '<div class="ov"><div class="l">本年股息率(按市值)</div><div class="v mono">' + (rate === null ? '—' : (rate.toFixed(2) + '%')) + '</div></div>';
+  h += '<div class="ov"><div class="l">笔数</div><div class="v mono">' + DIVS.length + '</div></div>';
+  h += '</div>';
+  if (tops.length){
+    h += '<div style="margin-top:10px;font-size:12px;color:var(--tx2)">贡献 TOP' + tops.length + ':';
+    for (var t = 0; t < tops.length; t++){
+      var pctv = tot > 0 ? Math.round(tops[t].v / tot * 1000) / 10 : 0;
+      h += ' <span class="tag mu">' + esc(tops[t].n) + ' ' + pctv + '%</span>';
+    }
+    h += '</div>';
+  }
+  h += '<div style="margin-top:10px;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">';
+  h += '<tr style="color:var(--tx3)"><th style="text-align:left;padding:4px 6px">日期</th><th style="text-align:left;padding:4px 6px">标的</th><th style="text-align:right;padding:4px 6px">实收</th><th style="text-align:left;padding:4px 6px">备注</th><th></th></tr>';
+  if (!rows.length){
+    h += '<tr><td colspan="5" style="padding:8px 6px;color:var(--tx3)">暂无记录 —— 收到分红就记一笔(日期/标的/实收金额)</td></tr>';
+  }
+  for (var r2 = 0; r2 < rows.length; r2++){
+    var d2 = rows[r2];
+    h += '<tr><td style="padding:4px 6px" class="mono">' + esc(d2.date) + '</td>' +
+         '<td style="padding:4px 6px">' + esc(d2.name) + '</td>' +
+         '<td style="padding:4px 6px;text-align:right" class="mono">' + money(num(d2.amount)) + '</td>' +
+         '<td style="padding:4px 6px;color:var(--tx2)">' + esc(d2.note || '') + '</td>' +
+         '<td style="padding:4px 6px;text-align:right"><button class="tag tagbtn" data-act="div-del" data-id="' + esc(d2.id) + '">删</button></td></tr>';
+  }
+  h += '</table></div>';
+  h += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+  h += '<input id="divDate" type="date" class="bs-in" style="width:150px" value="' + todayISO() + '">';
+  h += '<select id="divName" class="bs-in" style="width:150px">';
+  var seenN = {};
+  for (var i3 = 0; i3 < RECORDS.length; i3++){
+    var nm3 = RECORDS[i3][F.name];
+    if (!nm3 || seenN[nm3]) continue; seenN[nm3] = 1;
+    h += '<option value="' + esc(nm3) + '">' + esc(nm3) + '</option>';
+  }
+  h += '</select>';
+  h += '<input id="divAmt" type="number" step="0.01" class="bs-in" style="width:120px" placeholder="实收金额">';
+  h += '<input id="divNote" class="bs-in" style="width:160px" placeholder="备注(年度/税前税后)">';
+  h += '<button class="mapply" data-act="div-add" type="button">记一笔</button>';
+  h += '</div></div>';
+  el.innerHTML = sanitizeHtml(h);
+}
+/* ===================== 作战简报(一键复制) ===================== */
+function copyBriefing(){
+  var tmv = totalMV(), st = statTier();
+  var poolSum = 0;
+  for (var k in POOLS) if (Object.prototype.hasOwnProperty.call(POOLS, k)) poolSum += (num(POOLS[k].amount) || 0);
+  var cash = poolSum + (num(PV2.capitalLeft) || 0) + (num(PV2.pendingPool) || 0) + (num(PV2.divPool) || 0);
+  var L = [];
+  L.push('【长期组合作战台 · ' + dateStr(todayISO()) + ' 作战简报】');
+  L.push('组合市值 ' + money(tmv) + ' | 核心 ' + pctTxt(st.corePct) + ' / 卫星 ' + pctTxt(st.satPct) +
+    ' | 可动现金 ' + money(cash));
+  var buckets = { double: [], normal: [], half: [], sell: [] };
+  var s = sortedRecs();
+  for (var i = 0; i < s.length; i++){
+    var r = s[i];
+    if (!isInPortfolio(r)) continue;
+    var gr = gearOf(r);
+    if (!gr) continue;
+    var line = '• ' + r[F.name] + ' ' + money(num(r[F.price]));
+    if (gr.k === 'double') line += ' · 加倍档(≤ ' + money(num(r[F.buy])) + ')';
+    else if (gr.k === 'normal') line += ' · 正常档(≤ ' + money(num(r[F.norm])) + ')';
+    else if (gr.k === 'half') line += ' · 减半档(≤ ' + money(num(r[F.norm])) + ',≥ 减仓价 ' + money(num(r[F.sell])) + ')';
+    else if (gr.k === 'sell') line += ' · 减仓档(≥ ' + money(num(r[F.sell])) + ')';
+    if (gr.k === 'double') buckets.double.push(line);
+    else if (gr.k === 'normal') buckets.normal.push(line);
+    else if (gr.k === 'half') buckets.half.push(line);
+    else buckets.sell.push(line);
+  }
+  L.push('');
+  L.push('── 今日可买 · 加倍(' + buckets.double.length + ')──');
+  if (buckets.double.length) for (var a = 0; a < buckets.double.length; a++) L.push(buckets.double[a]); else L.push('(无)');
+  L.push('── 今日可买 · 正常(' + buckets.normal.length + ')──');
+  if (buckets.normal.length) for (var b2 = 0; b2 < buckets.normal.length; b2++) L.push(buckets.normal[b2]); else L.push('(无)');
+  L.push('── 等回落 · 减半(' + buckets.half.length + ')──');
+  if (buckets.half.length) for (var c2 = 0; c2 < buckets.half.length; c2++) L.push(buckets.half[c2]); else L.push('(无)');
+  L.push('── 减仓档 · 勿买(' + buckets.sell.length + ')──');
+  if (buckets.sell.length) for (var d3 = 0; d3 < buckets.sell.length; d3++) L.push(buckets.sell[d3]); else L.push('(无)');
+  L.push('');
+  L.push('本年股息 ' + money(divYearSum()) + ' | 累计 ' + money(divTotalSum()) + ' | 笔数 ' + DIVS.length);
+  var text = L.join('\n');
+  function fallback(){
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      var okd = document.execCommand && document.execCommand('copy');
+      document.body.removeChild(ta);
+      toast(okd ? '简报已复制到剪贴板' : '复制失败,请手动全选复制', !okd);
+    } catch (e) { toast('复制失败,请手动复制', true); }
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){
+        toast('作战简报已复制到剪贴板(' + text.split('\n').length + ' 行)');
+      }, fallback);
+    } else fallback();
+  } catch (e) { fallback(); }
+}
 function normalize(r){
   var o = { _id: r.record_id };
   for (var k in r){
@@ -2668,6 +2810,7 @@ function refreshAll(){
   renderDetail();
   renderDecide();
   renderPool();
+  renderDivsCard();   /* ★ R73 股息账本 */
   renderRoute();
   renderWatch();
   renderPicker();
@@ -5616,6 +5759,7 @@ function cloudLoadState(){
     LEGACY_SEEN = legacyFound;
     /* ★ R62：吸收关注关系行（FOLLOW::谁::rid）—— REC_INDEX 已在上面统一记好键→id */
     followAbsorbRows(rows);
+    if (byKey.DIVIDENDS) divLoadFrom(byKey.DIVIDENDS);   /* ★ R73 股息账本(状态键 DIVIDENDS) */
     /* 组装回原来的 STATE_CACHE 形状（{档案名:数据}）—— 上层逻辑零改动 */
     function bagOf(kind){
       var out = {}, pre = kind + '::';
@@ -7889,6 +8033,7 @@ function bindEvents(){
   var bb = $('btnBulk'); if (bb) bb.addEventListener('click', doBulk);
   var sb = $('syncBox'); if (sb) sb.addEventListener('click', retrySync);
   var gb = $('ghBtn'); if (gb) gb.addEventListener('click', ghOpenPanel);   /* ★ R71 数据源面板 */
+  var bb = $('briefBtn'); if (bb) bb.addEventListener('click', copyBriefing);   /* ★ R73 作战简报 */
   var be = $('btnExport'); if (be) be.addEventListener('click', exportJson);
   var bi = $('btnImport'); if (bi) bi.addEventListener('click', function(){ $('fileImport').click(); });
   var th = $('btnTheme'); if (th) th.addEventListener('click', themeToggle);
@@ -8007,6 +8152,32 @@ function bindGlobalDelegates(){
     if (act === 'f-shared'){
       var ridFs = el.getAttribute('data-rid');
       if (ridFs) toggleFollowShared(ridFs);
+      return;
+    }
+    /* ★ R73 股息账本:记一笔 / 删一笔 */
+    if (act === 'div-add'){
+      var dvD = document.getElementById('divDate');
+      var dvN = document.getElementById('divName');
+      var dvA = document.getElementById('divAmt');
+      var dvT = document.getElementById('divNote');
+      var amt = parseFloat(dvA ? dvA.value : '');
+      if (!dvD || !dvD.value){ toast('请选择分红到账日期', true); return; }
+      if (!dvN || !dvN.value){ toast('请选择标的', true); return; }
+      if (!isFinite(amt) || amt <= 0){ toast('请填写正确的实收金额', true); return; }
+      var rec = findByName(dvN.value);
+      DIVS.push({ id: 'd' + Date.now(), date: dvD.value, code: rec ? (rec['代码'] || '') : '',
+                  name: dvN.value, amount: amt, note: dvT ? dvT.value.trim() : '' });
+      divSave();
+      renderDivsCard();
+      toast('已记一笔股息 ' + money(amt));
+      return;
+    }
+    if (act === 'div-del'){
+      var dvId = el.getAttribute('data-id');
+      DIVS = DIVS.filter(function(x){ return x.id !== dvId; });
+      divSave();
+      renderDivsCard();
+      toast('已删除该笔记录');
       return;
     }
   }, false);
