@@ -177,6 +177,25 @@ const flush = function(ms){ return new Promise(function(r){ setTimeout(r, ms || 
   eq('B5 ★★ 生产代码里已无 confirmBox 调用（只剩函数定义本身）', callSites, 1);
   ok('B5 ★ 导入确认使用 askConfirm（统一弹层）', /askConfirm\(\s*'将导入/.test(HTML) || HTML.indexOf("'将导入 '") >= 0);
 
+  /* ══ B7 R67：内嵌查看器导出兜底（iframe 沙箱静默拦截下载） ══ */
+  console.log('\n【B7】内嵌模式备份弹层（showBackupSheet）');
+  ok('B7 ★ inEmbeddedViewer 已抽出（可测）', typeof w.inEmbeddedViewer === 'function');
+  eq('B7 jsdom 非内嵌 → 走正常下载路径', w.inEmbeddedViewer(), false);
+  {
+    const pack2 = w.buildBackupPack();
+    w.showBackupSheet(pack2, JSON.stringify(pack2, null, 2));
+    const ta = w.document.getElementById('bkText');
+    ok('B7 ★ 弹层渲染出 textarea', !!ta);
+    let parsed = null;
+    try { parsed = JSON.parse(ta.value); } catch (e) {}
+    ok('B7 ★ textarea 内容是完整可解析的备份包', !!parsed && parsed.state && !!parsed.state.follows,
+       parsed ? 'keys=' + Object.keys(parsed).join(',') : 'unparsable');
+    ok('B7 ★ 提示里给出浏览器新标签方案', w.document.getElementById('backupSheet').innerHTML.indexOf('新标签') >= 0);
+    let threw = null;
+    try { w.document.getElementById('bkCopy').click(); } catch (e) { threw = e.message; }
+    ok('B7 复制按钮点击不抛异常', threw === null, threw);
+  }
+
   console.log('\n【运行时】');
   ok('★ 全程无运行时错误', bootErr.length === 0, bootErr.join(' | '));
 

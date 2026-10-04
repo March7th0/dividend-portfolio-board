@@ -986,6 +986,8 @@ table.card{min-width:0}
   <div data-page-node-id="AWPHpIpoukotfkwNLzzaaB" class="buysheet" id="fundSheet"></div>
   <!-- ★ 页面内确认弹层容器（替代 window.confirm，见 askConfirm 注释） -->
   <div class="buysheet" id="confirmSheet"></div>
+  <!-- ★ R67：内嵌查看器会静默拦截文件下载 → 导出备份改走此弹层（textarea 可复制） -->
+  <div class="buysheet" id="backupSheet"></div>
     <div class="buysheet" id="ghSheet"></div>
 
   <!--pnid:jteDp5zpRmTuqgG7ycyTnJ--><!-- 建仓路线 -->
@@ -1126,6 +1128,7 @@ table.card{min-width:0}
           <table data-page-node-id="IaRxQctSa9Mem3j4Hc4wzQ">
             <thead data-page-node-id="tA8ag5wDOuKT58C0Mcbo0u"><tr data-page-node-id="SYxSrEd7ZB5hJ89ROG7hOs"><th data-page-node-id="GeanseokRWq77e7uxnU7y6"><!--pnid:lHOL53FIljaxpxRrNV0bZ4-->版本</th><th data-page-node-id="GL8o43Wixj4JSUYeBWMYpw"><!--pnid:pBHEyFOfZNm2TZR1Pwceoz-->日期</th><th data-page-node-id="FfxdIU1WiDb3mzf1ZNMI7M"><!--pnid:PLBycId50aZwREjpbrvphP-->改了什么</th></tr></thead>
             <tbody data-page-node-id="YVT4xzsoVz76Dpjlz1Rddq">
+              <tr><td class="mono">v57</td><td class="tiny">2026-10-04</td><td class="tiny">修复：WorkBuddy 内嵌查看器里点「导出 JSON 备份」<b>无任何反应</b>（iframe 沙箱静默拦截下载）——内嵌模式改为弹出备份全文（一键复制），并提示可在浏览器新标签正常下载</td></tr>
               <tr><td class="mono">v56</td><td class="tiny">2026-10-04</td><td class="tiny">修复窄屏「<b>建仓顺序</b>」卡排版：目标/手数列换到第二行（此前容器不许换行，文字被挤进竖缝）</td></tr>
               <tr><td class="mono">v55</td><td class="tiny">2026-10-03</td><td class="tiny">R63 审查的复核补漏：<b>分配引擎与明细表改回全量口径</b>——取关一只后，月度定投照常分到它的池子（此前会被静默跳过，属资金路由问题）；明细台账不再丢行</td></tr>
               <tr><td class="mono">v54</td><td class="tiny">2026-10-03</td><td class="tiny">R62 审查修复：<b>资金池/建仓路线/决策清单/现金总览/快速录入改回全量口径</b>（取关不再让钱和计划消失）；<b>备份/恢复覆盖关注层</b>（state.follows）</td></tr>
@@ -1285,7 +1288,7 @@ var DATABASE_ID = 'RZJijiIkrKlwRQExwHjH0y';
    用途：用户与开发者能「当场对齐」看到的是哪一版。
    之前几轮反复出现「我这边测好了 / 你那边依旧无效」的拉扯，
    根因之一就是无法确认双方在看同一版代码 —— 有了这个标签，一句话就能定位。 */
-var APP_VER = 'v56 · R66 · 2026-10-04';
+var APP_VER = 'v57 · R67 · 2026-10-04';
 var F = {
   name:'标的名称', code:'代码', btype:'企业类型', tier:'组合层级',
   price:'当前价格', iv:'内在价值', low:'估值区间低', high:'估值区间高',
@@ -7494,13 +7497,74 @@ function buildBackupPack(){
 }
 function exportJson(){
   var pack = buildBackupPack();
-  var blob = new Blob([JSON.stringify(pack, null, 2)], { type:'application/json' });
+  var json = JSON.stringify(pack, null, 2);
+  /* ★ R67：WorkBuddy 内嵌查看器的 iframe 沙箱会【静默拦截】程序化下载——
+     a.click() 没有任何反应也没有提示（与 R39 confirm 被拦同类）。
+     检测到内嵌环境（self !== top）→ 不做无效下载,直接弹「备份内容」弹层：
+     textarea 全文可复制,并提示可在浏览器新标签打开本页后正常下载。 */
+  if (inEmbeddedViewer()){
+    showBackupSheet(pack, json);
+    return;
+  }
+  var blob = new Blob([json], { type:'application/json' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = '长期组合备份_' + dateStr(new Date().toISOString()) + '.json';
   document.body.appendChild(a); a.click();
   setTimeout(function(){ document.body.removeChild(a); }, 300);
   toast('已备份 ' + pack.count + ' 条标的 + ' + pack.state.profile.list.length + ' 个档案的资金池/流水/持仓');
+}
+/* R67：是否运行在内嵌查看器里（iframe）。跨域取 top 可能抛异常 → 按内嵌处理（保守） */
+function inEmbeddedViewer(){
+  try { return window.self !== window.top; } catch (e) { return true; }
+}
+/* R67：内嵌环境的备份弹层 —— textarea 展示完整 JSON,一键复制（execCommand 兜底） */
+function showBackupSheet(pack, json){
+  var host = $('backupSheet');
+  if (!host) return;
+  host.innerHTML = sanitizeHtml(
+    '<div class="bs-mask" id="bkMask"></div>' +
+    '<div class="bs-card">' +
+      '<div class="bs-h"><b>备份内容（内嵌模式）</b>' +
+        '<button class="bs-x" id="bkClose" type="button" aria-label="关闭">' +
+          '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+          'stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' +
+      '<div class="bs-b bs-scroll">' +
+        '<div class="fp-hint" style="margin:0 0 9px">内嵌查看器会拦截文件下载，浏览器收不到保存提示。' +
+          '两种办法：① 点下方「复制全文」，到记事本粘贴并存为 <b>.json</b> 文件；' +
+          '② 在浏览器<b>新标签页</b>打开本页地址后点「导出 JSON 备份」，即可正常下载。</div>' +
+        '<textarea id="bkText" readonly spellcheck="false" style="width:100%;height:44vh;box-sizing:border-box;' +
+          'font-family:Consolas,monospace;font-size:11px;line-height:1.4;border:1px solid var(--line);' +
+          'border-radius:8px;padding:9px;background:var(--fill);color:var(--tx);resize:vertical">' +
+          esc(json) + '</textarea>' +
+        '<div class="fp-btnrow" style="margin-top:9px">' +
+          '<button class="btn primary" id="bkCopy" type="button">复制全文</button>' +
+          '<button class="btn" id="bkClose2" type="button">关闭</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>');
+  host.style.display = 'block';
+  function closeBk(){ host.style.display = 'none'; host.innerHTML = ''; }
+  if ($('bkMask')) $('bkMask').addEventListener('click', closeBk);
+  if ($('bkClose')) $('bkClose').addEventListener('click', closeBk);
+  if ($('bkClose2')) $('bkClose2').addEventListener('click', closeBk);
+  if ($('bkCopy')){
+    $('bkCopy').addEventListener('click', function(){
+      var ta = $('bkText');
+      if (!ta) return;
+      ta.focus(); ta.select();
+      var done = false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(ta.value);
+          done = true;
+        } else {
+          done = document.execCommand('copy');
+        }
+      } catch (e){ done = false; }
+      toast(done ? '已复制全文，去记事本粘贴并存为 .json' : '复制失败：请手动长按/全选复制', !done);
+    });
+  }
 }
 function importJson(file){
   var reader = new FileReader();
