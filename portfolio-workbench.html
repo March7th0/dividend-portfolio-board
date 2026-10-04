@@ -2219,9 +2219,22 @@ function ghPutFile(path, text, message, sha){
         'Authorization': 'token ' + c.token, 'Accept': 'application/vnd.github+json',
         'Content-Type': 'application/json', 'User-Agent': 'portfolio-workbench'
       }, body: JSON.stringify(body) }).then(function(r){
-    if (r.status === 409) return { conflict: true };
-    if (r.status === 401 || r.status === 403) throw ghErr(r.status, 'GitHub 凭证无效或权限不足');
-    if (!r.ok) throw ghErr(r.status, 'GitHub 写入 ' + r.status);
+    /* ★ R74 修复:409/422 都可重试(sha 过期或缺失),且必须把 GitHub 的错误正文带给上层 */
+    if (r.status === 409 || r.status === 422){
+      return r.json().then(function(j){
+        return { conflict: true, status: r.status, bodyMsg: (j && j.message) || '' };
+      }, function(){ return { conflict: true, status: r.status, bodyMsg: '' }; });
+    }
+    if (r.status === 401 || r.status === 403){
+      return r.json().then(function(j){
+        throw ghErr(r.status, 'GitHub 凭证无效或权限不足:' + ((j && j.message) || ''));
+      }, function(){ throw ghErr(r.status, 'GitHub 凭证无效或权限不足'); });
+    }
+    if (!r.ok){
+      return r.json().then(function(j){
+        throw ghErr(r.status, 'GitHub 写入 ' + r.status + ':' + ((j && j.message) || ''));
+      }, function(){ throw ghErr(r.status, 'GitHub 写入 ' + r.status); });
+    }
     return r.json().then(function(j){ return { ok: true, sha: j.content && j.content.sha }; });
   }, function(e){ throw (e && e.ghError) ? e : ghErr(0, (e && e.message) || '网络错误'); });
 }
@@ -2258,19 +2271,26 @@ function ghAttemptPutRecords(remaining, sha, recs, message){
     return res;
   });
 }
-/* records.json 写合并队列:同一 tick 内的多笔操作合并为一次提交(如 fullReset 批量清零) */
-var ghRecOps = [], ghRecTimer = null;
+/* records.json 写合并队列:同一 tick 内的多笔操作合并为一次提交(如 fullReset 批量清零);
+   ★ R74 修复:flush 串行化(ghFlushChain)——并发 flush 会用陈旧 sha 相互踩踏 */
+var ghRecOps = [], ghRecTimer = null, ghFlushChain = Promise.resolve();
 function ghCommitRecords(op){
   return new Promise(function(resolve){
     ghRecOps.push({ op: op, resolve: resolve });
     if (ghRecTimer) clearTimeout(ghRecTimer);
-    ghRecTimer = setTimeout(ghFlushRecords, 400);
+    ghRecTimer = setTimeout(function(){
+      var batch = ghRecOps; ghRecOps = []; ghRecTimer = null;
+      ghFlushChain = ghFlushChain.then(function(){ return ghFlushRecords(batch); })
+        .then(function(results){
+          for (var i = 0; i < batch.length; i++) batch[i].resolve(results[i]);
+        }, function(e){
+          for (var i = 0; i < batch.length; i++) batch[i].resolve({ ok: false, e: e });
+        });
+    }, 400);
   });
 }
-function ghFlushRecords(){
-  var ops = ghRecOps; ghRecOps = []; ghRecTimer = null;
-  if (!ops.length) return;
-  ghGetContents('data/records.json').then(function(cur){
+function ghFlushRecords(ops){
+  return ghGetContents('data/records.json').then(function(cur){
     var recs = [];
     try { recs = JSON.parse(cur.text) || []; } catch (e) { recs = []; }
     for (var i = 0; i < ops.length; i++){
@@ -2281,10 +2301,14 @@ function ghFlushRecords(){
     }
     return ghAttemptPutRecords(3, cur.sha, recs,
       '数据源:更新 ' + ops.length + ' 条记录(' + DATA_MODE + ')');
-  }).then(function(){
-    for (var i = 0; i < ops.length; i++) ops[i].resolve({ ok: true });
-  }, function(e){
-    for (var i = 0; i < ops.length; i++) ops[i].resolve({ ok: false, e: e });
+  }).then(function(res){
+    var out = [];
+    for (var i = 0; i < ops.length; i++){
+      out.push(res && res.conflict
+        ? { ok: false, e: ghErr(res.status || 0, '冲突重试耗尽:' + (res.bodyMsg || '')) }
+        : { ok: true });
+    }
+    return out;
   });
 }
 function ghStatePath(key){ return 'data/state/' + ghEncodeKey(key) + '.json'; }
@@ -2296,23 +2320,38 @@ function ghStateRead(key){
     return (o && typeof o === 'object') ? o : null;
   });
 }
+/* ★ R74 修复:状态键 upsert 必须先取 sha 再写 —— 原实现对已存在文件永传 null sha,
+   第二次及以后写入一律 422「sha wasn't supplied」(静默丢写,池/流水/账本全部中招);
+   409/422 统一重试,远端「更新时间」较新则本地让位(时间戳纪律)。 */
 function ghStateWrite(key, payload, ts){
-  var body = { '键': key, '数据': payload, '更新时间': ts };
-  return ghPutFile(ghStatePath(key), JSON.stringify(body, null, 1), '状态:' + key, null).then(function(res){
-    if (res.conflict){                                    /* 冲突:按 更新时间 保留较新 */
-      return ghGetJson(ghStatePath(key)).then(function(cur){
-        if (!cur) return res;
-        var curBody = null;
-        try { curBody = JSON.parse(cur.text); } catch (e) { curBody = null; }
-        /* ★ R71 修复:解析失败(如历史 BOM 文件)绝不能静默丢写 —— 带上远端 sha 直接覆盖 */
-        if (!curBody) return ghPutFile(ghStatePath(key), JSON.stringify(body, null, 1), '状态:' + key + '(覆盖坏文件)', cur.sha);
-        var curTs = (curBody && curBody['更新时间']) || '', newTs = ts;
-        if (String(curTs) > String(newTs)) return { ok: true, kept: 'remote' };
-        return ghPutFile(ghStatePath(key), JSON.stringify(body, null, 1), '状态:' + key + '(重试)', cur.sha);
-      });
-    }
-    return res;
-  });
+  var path = ghStatePath(key);
+  function attempt(remaining, sha){
+    var body = { '键': key, '数据': payload, '更新时间': ts };
+    return ghPutFile(path, JSON.stringify(body, null, 1), '状态:' + key, sha).then(function(res){
+      if (res.conflict && remaining > 0){
+        return ghGetJson(path).then(function(cur){
+          if (!cur) return attempt(remaining - 1, null);        /* 文件其实不存在 → 无 sha 重建 */
+          var remoteBody = null;
+          try { remoteBody = JSON.parse(cur.text); } catch (e) { remoteBody = null; }
+          if (!remoteBody) return attempt(remaining - 1, cur.sha);   /* 坏文件(BOM 等) → 覆盖 */
+          var remoteTs = remoteBody['更新时间'] || '';
+          if (String(remoteTs) > String(ts)) return { ok: true, kept: 'remote' };   /* 远端较新 → 本地让位 */
+          return attempt(remaining - 1, cur.sha);
+        });
+      }
+      if (res.conflict) throw ghErr(res.status || 0, '状态写入冲突重试耗尽:' + key + ' ' + (res.bodyMsg || ''));
+      return res;
+    }, function(e){ throw (e && e.ghError) ? e : ghErr(0, (e && e.message) || '网络错误'); });
+  }
+  return ghGetJson(path).then(function(cur){
+    var sha = cur ? cur.sha : null;
+    var remoteBody = null;
+    if (cur){ try { remoteBody = JSON.parse(cur.text); } catch (e) { remoteBody = null; } }
+    var remoteTs = (remoteBody && remoteBody['更新时间']) || '';
+    /* 远端较新 → 本地是旧数据的写,让位(下次 cloudLoadState 会带回远端最新) */
+    if (sha && remoteBody && String(remoteTs) > String(ts)) return { ok: true, kept: 'remote' };
+    return attempt(3, sha);
+  }, function(){ return attempt(3, null); });   /* 探测失败(如目录尚未建立)→ 仍尝试创建 */
 }
 function ghAdapter(){
   return {

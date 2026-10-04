@@ -85,7 +85,7 @@ function makeGhMock(w, files){
     if ((opts.method || 'GET') === 'PUT'){
       const body = JSON.parse(opts.body);
       const cur = shas[p];
-      if (cur === undefined) return resp(404, { message: 'parent dir missing (mock)' });
+      if (cur === undefined && p.indexOf('/') < 0) return resp(404, { message: 'parent dir missing (mock)' });
       if (conflictOnce && p === 'data/records.json'){
         conflictOnce = false;
         if (remoteNewerRecord){
@@ -97,7 +97,11 @@ function makeGhMock(w, files){
         }
         return resp(409, { message: 'mock conflict' });
       }
-      if (cur !== undefined && body.sha && body.sha !== cur) return resp(409, { message: 'mock sha mismatch' });
+      /* ★ R74:与真 GitHub 一致 —— 已存在文件必须带 sha:缺失 → 422,不符 → 409;新文件可无 sha 创建 */
+      if (cur !== undefined){
+        if (!body.sha) return resp(422, { message: 'Invalid request.\n\n"sha" wasn\'t supplied.' });
+        if (body.sha !== cur) return resp(409, { message: 'mock sha mismatch' });
+      }
       files[p] = b64d(body.content); refresh(p);
       return resp(200, { content: { sha: shas[p] } });
     }
@@ -192,6 +196,13 @@ const flush = function(ms){ return new Promise(function(r){ setTimeout(r, ms || 
   ok('G5 ★ POOLS::blink 已落数据仓(2500)', poolsFile['数据']['v_gs'].amount === 2500, mock.files['data/state/POOLS__blink.json'].slice(0, 120));
   const profFile = JSON.parse(mock.files['data/state/PROFILE.json']);
   ok('G5 PROFILE 同步落仓', profFile['数据'].current === 'blink');
+
+  console.log('\n【G5b】二次写同一状态键(R74 sha 修复回归)');
+  w.POOLS['v_gs'] = { amount: 3000 };
+  await w.cloudSaveState({ immediate: true });
+  await flush(300);
+  const pf2 = JSON.parse(mock.files['data/state/POOLS__blink.json']);
+  ok('G5b ★ 二次写成功且内容更新(3000)', pf2['数据']['v_gs'].amount === 3000, mock.files['data/state/POOLS__blink.json'].slice(0, 140));
 
   console.log('\n【G6】轮询与回声');
   w.ghPollOnce();                        /* 建立基线 sha */
