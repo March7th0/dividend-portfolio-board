@@ -81,6 +81,14 @@ a{color:var(--ac)}
 #ghBtn{display:none}
 #ghBtn.show{display:flex}
 #ghBtn.on{border-color:var(--dn);color:var(--dn)}
+/* ★ R72 行情快照提示条:GitHub 数据源模式下有未应用行情时出现 */
+#marketBar{display:none;max-width:1180px;margin:12px auto 0;padding:0 16px}
+#marketBar .mbar{display:flex;align-items:center;gap:10px;background:var(--acbg);color:var(--ac);
+  border:1px solid var(--ac);border-radius:var(--r2);padding:9px 14px;font-size:13px}
+#marketBar .mbar b{font-weight:700}
+#marketBar .mbar .mapply{margin-left:auto;background:var(--dark);color:var(--darktx);border:none;
+  border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;font-weight:600}
+#marketBar .mbar .mapply:hover{opacity:.88}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--tx3);flex:0 0 auto}
 .dot.ok{background:var(--dn)} .dot.load{background:var(--br)} .dot.off{background:#c2c8d4}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -932,6 +940,7 @@ table.card{min-width:0}
 
   <!--pnid:f93I9ZrnB7udLxrm9hCLGv--><!-- 全局提醒条：非「估值看板」页出现，仅当有需处理/留意项（见 renderAlertBar） -->
   <div data-page-node-id="zkIBhqTkdbltN7AEYmg0v8" id="alertBar"></div>
+  <div id="marketBar"></div>
 
   <!--pnid:z3N9gssIcceDtH33A9Dc1b--><!-- 估值看板 -->
   <section data-page-node-id="BrE1jI1loyPLKSHCS6tmJS" class="pane on" id="pane-board">    <div data-page-node-id="53yaYEz5frqVlNfKtk63hw" class="sec">
@@ -1288,7 +1297,7 @@ var DATABASE_ID = 'RZJijiIkrKlwRQExwHjH0y';
    用途：用户与开发者能「当场对齐」看到的是哪一版。
    之前几轮反复出现「我这边测好了 / 你那边依旧无效」的拉扯，
    根因之一就是无法确认双方在看同一版代码 —— 有了这个标签，一句话就能定位。 */
-var APP_VER = 'v57 · R67 · 2026-10-04';
+var APP_VER = 'v58 · R72 · 2026-10-04';
 var F = {
   name:'标的名称', code:'代码', btype:'企业类型', tier:'组合层级',
   price:'当前价格', iv:'内在价值', low:'估值区间低', high:'估值区间高',
@@ -2050,6 +2059,7 @@ function afterLoad(opts){
        loadAll → cloudLoadState → 云端 HOLDINGS 还是旧的 → 持仓立刻被套回来，
        用户看到的就是「重置了，持仓手数和资金都还在」。 */
   if (!(opts && opts.skipState)) cloudLoadState();
+  if (DATA_MODE === 'gh') ghMarketCheck();   /* ★ R72:每次同步后检查行情快照 */
 }
 /* 订阅数据变化：别的设备/表格里改了数据，本页自动刷新（平台只给「变了哪个库」）
    ★★ R37 关键修复 —— 自我写入回声抑制
@@ -2394,6 +2404,7 @@ function ghPollOnce(){
           if (shas['data/state'] !== ghLastShas['data/state']) ids.push('gkfII6uQEsbgZHkbLCmAdl');
           if (ids.length) ghCb({ databaseIds: ids });
         }
+        if (ghLastShas && shas['data/market'] !== ghLastShas['data/market']) ghMarketCheck();  /* ★ R72 */
         ghLastShas = shas;
       });
     }).catch(function(){ /* 轮询失败静默,下个周期重试 */ });
@@ -2483,6 +2494,69 @@ function ghBtnSync(){
   if (DATA_MODE === 'sdk') b.className = 'stat-sync gh';
   else if (DATA_MODE === 'gh') b.className = 'stat-sync gh show on';
   else b.className = 'stat-sync gh show';
+}
+/* ===================== ★ R72 行情快照(数据仓 market/,Action 每交易日生成) =====================
+   数据流:GitHub Action 收盘后拉腾讯行情 → data/market/latest.json(+history/<sym>.json)
+   → 页面(GH 模式)加载后 ghMarketCheck() 比对 → 有新行情显示提示条 → 一键应用
+   → updateRecord 逐条写入(经适配器合并队列 = 一次提交)。应用记录存 localStorage。 */
+function ghMarketAppliedGet(){ try { return localStorage.getItem('dpb_market_applied') || ''; } catch(e){ return ''; } }
+function ghMarketAppliedSet(v){ try { localStorage.setItem('dpb_market_applied', v); } catch(e){} }
+function ghMarketHide(){ var b = $('marketBar'); if (b){ b.style.display = 'none'; b.innerHTML = ''; } }
+function ghMarketCheck(){
+  if (DATA_MODE !== 'gh'){ ghMarketHide(); return; }
+  ghGetRaw('data/market/latest.json').then(function(t){
+    if (t === null || !t.trim()){ ghMarketHide(); return; }
+    var snap = null;
+    try { snap = JSON.parse(t); } catch(e){ ghMarketHide(); return; }
+    if (!snap || !snap.updated || !snap.items){ ghMarketHide(); return; }
+    if (ghMarketAppliedGet() === snap.updated){ ghMarketHide(); return; }
+    var total = 0, changes = 0;
+    for (var k in snap.items){
+      if (!Object.prototype.hasOwnProperty.call(snap.items, k)) continue;
+      total++;
+      var r = null;
+      for (var i = 0; i < RECORDS.length; i++) if ((RECORDS[i]['代码'] || '') === k){ r = RECORDS[i]; break; }
+      if (!r) continue;
+      if (num(r['当前价格']) !== num(snap.items[k].price)) changes++;
+    }
+    if (!changes){ ghMarketAppliedSet(snap.updated); ghMarketHide(); return; }   /* 价格无差异 = 已应用 */
+    var b = $('marketBar');
+    if (!b) return;
+    b.innerHTML = sanitizeHtml(
+      '<div class="mbar"><b>📈 行情快照 ' + esc(snap.updated) + '</b>' +
+      '<span>' + total + ' 只 · 含 MA20/MA60/RSI14 · 其中 ' + changes + ' 只价格有变化</span>' +
+      '<button class="mapply" id="mktApply" type="button">一键应用</button></div>');
+    b.style.display = 'block';
+    var btn = $('mktApply');
+    if (btn) btn.onclick = ghMarketApply;
+  }, function(){ ghMarketHide(); });
+}
+function ghMarketApply(){
+  ghGetRaw('data/market/latest.json').then(function(t){
+    var snap = JSON.parse(t);
+    if (!snap || !snap.items) return;
+    var jobs = [], n = 0;
+    for (var i = 0; i < RECORDS.length; i++){
+      var r = RECORDS[i];
+      var it = snap.items[(r['代码'] || '')];
+      if (!it || it.price === null || it.price === undefined) continue;
+      var props = { '当前价格': { number: it.price }, '最近更新': { date: todayISO() } };
+      if (it.ma20 !== null && it.ma20 !== undefined) props['MA20'] = { number: it.ma20 };
+      if (it.ma60 !== null && it.ma60 !== undefined) props['MA60'] = { number: it.ma60 };
+      if (it.rsi14 !== null && it.rsi14 !== undefined) props['RSI14'] = { number: it.rsi14 };
+      jobs.push(db.updateRecord({ databaseId: DATABASE_ID, recordId: r._id, properties: props }));
+      n++;
+    }
+    if (!n){ toast('行情快照里没有匹配的标的', true); return; }
+    Promise.all(jobs).then(function(){
+      ghMarketAppliedSet(snap.updated);
+      toast('已应用行情快照 ' + snap.updated + '(' + n + ' 只,含 MA/RSI)');
+      loadAll(null, null, 0, { skipState: true });
+      ghMarketHide();
+    }, function(e){
+      toast('行情应用失败:' + ((e && e.message) || '请稍后重试'), true);
+    });
+  });
 }
 function normalize(r){
   var o = { _id: r.record_id };
