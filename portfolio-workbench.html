@@ -2173,6 +2173,11 @@ function ghFlattenProps(props){
 function ghB64(str){ return btoa(unescape(encodeURIComponent(str))); }
 function ghUnb64(b64){ return decodeURIComponent(escape(atob(String(b64).replace(/\s/g, '')))).replace(/^\uFEFF/, ''); }   /* ★ R71:剥转换器可能写入的 BOM */
 function ghFetch(url, opts){
+  opts = opts || {};
+  /* ★ R74 修复:强制绕过浏览器 HTTP 缓存 —— 同一 URL 会以不同 Accept 取两种格式
+     (raw 文件内容 / json 信封),缓存若不按 Vary 区分会串台,
+     曾实测:信封读命中 raw 缓存 → j.sha 取不到 → PUT 无 sha → 422 冲突重试耗尽 */
+  opts.cache = 'no-store';
   if (typeof fetch === 'function') return fetch(url, opts);
   return Promise.reject(new Error('当前浏览器不支持 fetch,无法使用 GitHub 数据源'));
 }
@@ -2510,6 +2515,7 @@ function ghOpenPanel(){
         '<div style="margin-top:10px"><input id="ghIn_repo" class="bs-in" style="width:100%" placeholder="仓库名(如 March7th0/dividend-portfolio-data)" value="' + esc(c.repo) + '">' + LT + '/div>' +
         '<div style="margin-top:8px"><input id="ghIn_token" class="bs-in" type="password" style="width:100%" placeholder="粘贴 token(github_pat_… 或 gho_…)" value="' + esc(c.token) + '">' + LT + '/div>' +
         '<div id="ghTestOut" style="margin-top:8px;font-size:12px;color:var(--tx2)">' + LT + '/div>' +
+        '<div style="margin-top:6px"><button class="tag tagbtn" id="ghDiagBtn" type="button">写入自检(排查 422)</button></div>' +
       '' + LT + '/div>' +
       '<div class="bs-f">' +
         '<button class="btn" id="ghClose">取消' + LT + '/button>' +
@@ -2519,6 +2525,30 @@ function ghOpenPanel(){
     '' + LT + '/div>');
   host.style.display = 'block';
   var close = function(){ host.style.display = 'none'; host.innerHTML = ''; };
+  /* ★ R74 写入自检:直发一个真 PUT(数据仓 diag 文件),把每步结果摊给用户看 —— 不再远程猜错 */
+  $('ghDiagBtn').onclick = function(){
+    var repo = $('ghIn_repo').value.trim() || GH_DEFAULT_REPO;
+    var tok = $('ghIn_token').value.trim();
+    if (tok) ghSaveConf(tok, repo);            /* 自检用当前输入的凭证 */
+    ghSaveConf($('ghIn_token').value.trim() || ghLoadConf().token, repo);
+    var out = $('ghTestOut');
+    if (!ghLoadConf().token){ out.textContent = '自检失败:没有可用 token'; return; }
+    var lines2 = [];
+    out.textContent = '自检中…';
+    var payload = JSON.stringify({ diag: true, ts: new Date().toISOString() });
+    ghGetContents('data/diag.json').then(function(cur){
+      lines2.push('① 读 diag.json:' + (cur ? ('sha=' + cur.sha.slice(0, 8) + '…(文件已存在)') : '404(将新建)'));
+      return ghPutFile('data/diag.json', payload, '写入自检 ' + new Date().toISOString(), cur ? cur.sha : null);
+    }).then(function(res){
+      if (res.conflict) lines2.push('② PUT → ' + res.status + ' 冲突:' + (res.bodyMsg || '(无正文)'));
+      else lines2.push('② PUT → 200 ✓ 新 sha=' + String(res.sha).slice(0, 8) + '…(写入链路正常)');
+      out.textContent = lines2.join('\n');
+    }, function(e){
+      lines2.push('② PUT 失败:' + ((e && e.message) || e));
+      out.textContent = lines2.join('\n');
+      toast('写入自检失败:' + ((e && e.message) || e), true);
+    });
+  };
   $('ghMask').onclick = close;
   $('ghClose').onclick = close;
   $('ghDropBtn').onclick = function(){ ghDropSource(); close(); };
