@@ -93,6 +93,13 @@ const flush = function(ms){ return new Promise(function(r){ setTimeout(r, ms || 
      HTML.indexOf('#verTag{flex:1 1 100%;text-align:right') >= 0);
   ok('C1 ★ 窄屏同步文案截断（#syncTxt max-width）',
      HTML.indexOf('#syncTxt{display:inline-block;max-width:60px') >= 0);
+  /* ══ R66：建仓顺序行窄屏两段式换行（容器必须允许 wrap）══ */
+  ok('C1-R66 ★ .op-row 容器允许换行（flex-wrap:wrap）',
+     HTML.indexOf('.op-row{display:flex;flex-wrap:wrap;') >= 0);
+  ok('C1-R66 ★ 窄屏 .op-g 独占第二行（flex:1 1 100% + 缩进 32px）',
+     HTML.indexOf('.op-g{flex:1 1 100%;text-align:left;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:2px 14px;margin-left:32px}') >= 0);
+  ok('C1-R66 ★ 旧的半截规则已移除（不再有无 wrap 容器下的 basis:100%）',
+     HTML.indexOf('.op-g{flex-basis:100%') < 0);
   ok('C1 ★ 顶栏允许换行且不再定死 56px 高',
      HTML.indexOf('.topbar-in{flex-wrap:wrap;height:auto;min-height:52px') >= 0);
 

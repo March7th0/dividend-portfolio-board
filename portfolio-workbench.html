@@ -414,18 +414,24 @@ table.card{min-width:0}
 .op-bh.op-buy{background:var(--dnbg);color:var(--dn)}
 .op-bh.op-wait{background:var(--brbg);color:var(--br)}
 .op-bh.op-no{background:var(--fill2);color:var(--tx3)}
-.op-row{display:flex;gap:10px;align-items:flex-start;padding:9px 2px;border-bottom:1px dashed var(--line2)}
+.op-row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;padding:9px 2px;border-bottom:1px dashed var(--line2)}
 .op-row:last-of-type{border-bottom:0}
 .op-n{flex:0 0 22px;height:22px;border-radius:50%;background:var(--fill2);color:var(--tx2);font-size:12px;display:flex;align-items:center;justify-content:center;font-weight:700}
 .op-row[data-b="1"] .op-n{background:var(--dnbg);color:var(--dn)}
 .op-row[data-b="2"] .op-n{background:var(--brbg);color:var(--br)}
-.op-m{flex:1;min-width:0}
+.op-m{flex:1 1 auto;min-width:0}
 .op-m b{font-size:13.5px}
 .op-m .tag{margin-left:6px}
 .op-d{font-size:11.5px;color:var(--tx2);margin-top:3px}
 .op-g{flex:0 0 auto;text-align:right;font-size:11.5px;color:var(--tx2);display:flex;flex-direction:column;gap:2px}
 .op-g b{color:var(--tx)}
-@media(max-width:640px){.op-g{flex-basis:100%;text-align:left;flex-direction:row;gap:10px;flex-wrap:wrap}}
+/* R66：窄屏顺序行两段式换行 —— 此前 .op-g 设 flex-basis:100% 但容器没有 flex-wrap,
+   等于强迫 .op-m 压到最小宽度,文字全部叠进竖缝。现在:容器可换行,
+   .op-g 独占第二行并向右缩进 32px(与序号圆点后的文本列对齐)。 */
+@media(max-width:640px){
+  .op-g{flex:1 1 100%;text-align:left;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:2px 14px;margin-left:32px}
+  .op-d{margin-top:2px}
+}
 .fp-l{width:104px;flex:0 0 auto;min-width:0}
 .fp-l b{font-size:13.5px;font-weight:650;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fp-l .c{font-size:11px;color:var(--tx3);font-variant-numeric:tabular-nums}
@@ -1120,6 +1126,7 @@ table.card{min-width:0}
           <table data-page-node-id="IaRxQctSa9Mem3j4Hc4wzQ">
             <thead data-page-node-id="tA8ag5wDOuKT58C0Mcbo0u"><tr data-page-node-id="SYxSrEd7ZB5hJ89ROG7hOs"><th data-page-node-id="GeanseokRWq77e7uxnU7y6"><!--pnid:lHOL53FIljaxpxRrNV0bZ4-->版本</th><th data-page-node-id="GL8o43Wixj4JSUYeBWMYpw"><!--pnid:pBHEyFOfZNm2TZR1Pwceoz-->日期</th><th data-page-node-id="FfxdIU1WiDb3mzf1ZNMI7M"><!--pnid:PLBycId50aZwREjpbrvphP-->改了什么</th></tr></thead>
             <tbody data-page-node-id="YVT4xzsoVz76Dpjlz1Rddq">
+              <tr><td class="mono">v56</td><td class="tiny">2026-10-04</td><td class="tiny">修复窄屏「<b>建仓顺序</b>」卡排版：目标/手数列换到第二行（此前容器不许换行，文字被挤进竖缝）</td></tr>
               <tr><td class="mono">v55</td><td class="tiny">2026-10-03</td><td class="tiny">R63 审查的复核补漏：<b>分配引擎与明细表改回全量口径</b>——取关一只后，月度定投照常分到它的池子（此前会被静默跳过，属资金路由问题）；明细台账不再丢行</td></tr>
               <tr><td class="mono">v54</td><td class="tiny">2026-10-03</td><td class="tiny">R62 审查修复：<b>资金池/建仓路线/决策清单/现金总览/快速录入改回全量口径</b>（取关不再让钱和计划消失）；<b>备份/恢复覆盖关注层</b>（state.follows）</td></tr>
               <tr><td class="mono">v53</td><td class="tiny">2026-10-03</td><td class="tiny"><b>关注层 · 多人标的隔离</b>：关注中/公共池/全部标的 三档范围，卡片快捷开关与归属徽标；新增标的默认进自己的关注；存量自动进公共池</td></tr>
@@ -1278,7 +1285,7 @@ var DATABASE_ID = 'RZJijiIkrKlwRQExwHjH0y';
    用途：用户与开发者能「当场对齐」看到的是哪一版。
    之前几轮反复出现「我这边测好了 / 你那边依旧无效」的拉扯，
    根因之一就是无法确认双方在看同一版代码 —— 有了这个标签，一句话就能定位。 */
-var APP_VER = 'v55 · R64 · 2026-10-03';
+var APP_VER = 'v56 · R66 · 2026-10-04';
 var F = {
   name:'标的名称', code:'代码', btype:'企业类型', tier:'组合层级',
   price:'当前价格', iv:'内在价值', low:'估值区间低', high:'估值区间高',
