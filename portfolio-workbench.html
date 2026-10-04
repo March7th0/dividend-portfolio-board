@@ -1300,9 +1300,10 @@ var DATABASE_ID = 'RZJijiIkrKlwRQExwHjH0y';
    用途：用户与开发者能「当场对齐」看到的是哪一版。
    之前几轮反复出现「我这边测好了 / 你那边依旧无效」的拉扯，
    根因之一就是无法确认双方在看同一版代码 —— 有了这个标签，一句话就能定位。 */
-var APP_VER = 'v59 · R73 · 2026-10-04';
+var APP_VER = 'v60 · R74 · 2026-10-04';
 var F = {
   name:'标的名称', code:'代码', btype:'企业类型', tier:'组合层级',
+  divTtm:'每股股息TTM',   /* ★ R74:税前每股股息(TTM),行情 Action 写入;显示时 ÷ 当前价格 = 股息率TTM */
   price:'当前价格', iv:'内在价值', low:'估值区间低', high:'估值区间高',
   buy:'加倍买入价', norm:'正常定投上限', sell:'减仓起始价',
   judge:'估值判定', status:'跟踪状态', focus:'关注度',
@@ -1578,6 +1579,13 @@ function posPct(r){
   var p = num(r[F.price]), m = midValue(r);
   if (p === null || m === null || m <= 0) return null;
   return p / m * 100;
+}
+/* ★ R74 股息率TTM(动态):每股股息TTM(税前,行情 Action 写入) ÷ 当前价格 × 100
+   存每股口径而非快照股息率 —— 价格无论自动更新还是手工修改,股息率都实时准确 */
+function ttmYieldOf(r){
+  var dps = num(r[F.divTtm]), p = num(r[F.price]);
+  if (dps === null || dps <= 0 || p === null || p <= 0) return null;
+  return Math.round(dps / p * 10000) / 100;
 }
 /* 估值判定：库里有值优先用库，否则由安全边际推算 */
 function judgeOf(r){
@@ -2527,7 +2535,7 @@ function ghMarketCheck(){
     if (!b) return;
     b.innerHTML = sanitizeHtml(
       '<div class="mbar"><b>📈 行情快照 ' + esc(snap.updated) + '</b>' +
-      '<span>' + total + ' 只 · 含 MA20/MA60/RSI14 · 其中 ' + changes + ' 只价格有变化</span>' +
+      '<span>' + total + ' 只 · 含 MA20/MA60/RSI14/股息率TTM · 其中 ' + changes + ' 只价格有变化</span>' +
       '<button class="mapply" id="mktApply" type="button">一键应用</button></div>');
     b.style.display = 'block';
     var btn = $('mktApply');
@@ -2547,6 +2555,7 @@ function ghMarketApply(){
       if (it.ma20 !== null && it.ma20 !== undefined) props['MA20'] = { number: it.ma20 };
       if (it.ma60 !== null && it.ma60 !== undefined) props['MA60'] = { number: it.ma60 };
       if (it.rsi14 !== null && it.rsi14 !== undefined) props['RSI14'] = { number: it.rsi14 };
+      if (it.dpsTtm !== null && it.dpsTtm !== undefined) props[F.divTtm] = { number: it.dpsTtm };   /* ★ R74 每股股息TTM(税前) */
       jobs.push(db.updateRecord({ databaseId: DATABASE_ID, recordId: r._id, properties: props }));
       n++;
     }
@@ -3170,6 +3179,7 @@ function cardHtml(r){
       (gr ? '<span class="tag ' + gr.c + '" data-bind data-sp-bindable="database" data-sp-database-id="RZJijiIkrKlwRQExwHjH0y">' + esc(gr.t) + '' + LT + '/span>' : '') +
       (r[F.status] ? '<span class="tag ' + statusTag(r[F.status]) + '" data-bind data-sp-bindable="database" data-sp-database-id="RZJijiIkrKlwRQExwHjH0y">' + esc(r[F.status]) + '' + LT + '/span>' : '') +
       (num(r[F.alloc]) !== null ? '<span class="tag mu" data-bind data-sp-bindable="database" data-sp-database-id="RZJijiIkrKlwRQExwHjH0y">目标 ' + fmt(num(r[F.alloc]), 0) + '%' + LT + '/span>' : '') +
+      (ttmYieldOf(r) !== null ? '<span class="tag br" title="每股股息TTM(税前) ÷ 当前价格">TTM ' + fmt(ttmYieldOf(r), 2) + '%</span>' : '') +
       followTagsHtml(r) +
     '' + LT + '/div>' +
     gauge +
@@ -3262,7 +3272,7 @@ function renderDetail(){
     '<th style="text-align:right">中枢' + LT + '/th><th style="text-align:right">区间' + LT + '/th>' +
     '<th style="text-align:right">安全边际' + LT + '/th><th style="text-align:right">加倍 / 减仓价' + LT + '/th>' +
     '<th style="text-align:center">判定' + LT + '/th><th style="text-align:center">状态' + LT + '/th>' +
-    '<th style="text-align:right">目标仓位' + LT + '/th><th style="text-align:right">现价股息率' + LT + '/th>' +
+    '<th style="text-align:right">目标仓位' + LT + '/th><th style="text-align:right">参考股息率' + LT + '/th><th style="text-align:right">股息率TTM' + LT + '/th>' +
     '' + LT + '/tr>' + LT + '/thead><tbody>';
   var rows = [];
   for (var i = 0; i < s.length; i++){
@@ -3283,6 +3293,7 @@ function renderDetail(){
       '<td style="text-align:center">' + (r[F.status] ? '<span class="tag ' + statusTag(r[F.status]) + '" data-bind data-sp-bindable="database" data-sp-database-id="RZJijiIkrKlwRQExwHjH0y">' + esc(r[F.status]) + '' + LT + '/span>' : '<span class="tiny">—' + LT + '/span>') + '' + LT + '/td>' +
       '<td class="num mono" data-bind data-sp-bindable="database" data-sp-database-id="RZJijiIkrKlwRQExwHjH0y">' + (num(r[F.alloc]) === null ? '—' : fmt(num(r[F.alloc]), 1) + '%') + '' + LT + '/td>' +
       '<td class="num tiny" data-bind data-sp-bindable="database" data-sp-database-id="RZJijiIkrKlwRQExwHjH0y">' + (num(r[F.div]) === null ? '—' : fmt(num(r[F.div]), 2) + '%') + '' + LT + '/td>' +
+      '<td class="num tiny" data-bind data-sp-bindable="database" data-sp-database-id="RZJijiIkrKlwRQExwHjH0y">' + (ttmYieldOf(r) === null ? '—' : fmt(ttmYieldOf(r), 2) + '%') + '' + LT + '/td>' +
     '' + LT + '/tr>');
   }
   html += rows.join('') + '' + LT + '/tbody>' + LT + '/table>' + LT + '/div>';

@@ -32,8 +32,8 @@ const MARKET = {
   updated: '2026-09-30',
   generatedAt: '2026-10-02T08:00:00Z',
   items: {
-    '600900.SH': { name:'长江电力', price:28.54, prevClose:28.38, ma20:28.31, ma60:28.25, rsi14:55.85, date:'2026-09-30' },
-    '000651.SZ': { name:'格力电器', price:38.28, prevClose:38.10, ma20:38.47, ma60:38.48, rsi14:47.32, date:'2026-09-30' },
+    '600900.SH': { name:'长江电力', price:28.54, prevClose:28.38, ma20:28.31, ma60:28.25, rsi14:55.85, date:'2026-09-30', divYieldTtm:3.5, dpsTtm:0.9989 },
+    '000651.SZ': { name:'格力电器', price:38.28, prevClose:38.10, ma20:38.47, ma60:38.48, rsi14:47.32, date:'2026-09-30', divYieldTtm:7.83, dpsTtm:2.9973 },
     '999999.XX': { name:'不在估值表里', price:1.23, date:'2026-09-30' }
   }
 };
@@ -131,7 +131,7 @@ function barVisible(w){ const b = w.document.getElementById('marketBar'); return
   eq('M2 DATA_MODE=gh', w2.DATA_MODE, 'gh');
   eq('M2 记录 3 条', w2.RECORDS.length, 3);
   ok('M2 ★ 行情条出现', barVisible(w2), barText(w2));
-  ok('M2 文案含日期与只数', barText(w2).indexOf('2026-09-30') >= 0 && barText(w2).indexOf('2 只价格有变化') >= 0, barText(w2));
+  ok('M2 文案含日期/只数/TTM', barText(w2).indexOf('2026-09-30') >= 0 && barText(w2).indexOf('2 只价格有变化') >= 0 && barText(w2).indexOf('股息率TTM') >= 0, barText(w2));
 
   console.log('\n【M3】一键应用');
   w2.document.getElementById('mktApply').dispatchEvent(new w2.Event('click', { bubbles: true, cancelable: true }));
@@ -139,6 +139,8 @@ function barVisible(w){ const b = w.document.getElementById('marketBar'); return
   const cp = w2.findByName('长江电力');
   ok('M3 ★ 长电价格更新为 28.54', cp && cp['当前价格'] === 28.54, cp && cp['当前价格']);
   ok('M3 ★ MA20/MA60/RSI14 已写入', cp['MA20'] === 28.31 && cp['MA60'] === 28.25 && cp['RSI14'] === 55.85, JSON.stringify([cp['MA20'], cp['MA60'], cp['RSI14']]));
+  ok('M3 ★ 每股股息TTM 已写入(0.9989)', cp['每股股息TTM'] === 0.9989, cp['每股股息TTM']);
+  ok('M3 ★ 动态股息率TTM = 3.50%(0.9989÷28.54)', w2.ttmYieldOf(cp) === 3.5, w2.ttmYieldOf(cp));
   const gl = w2.findByName('格力电器');
   ok('M3 格力价格更新为 38.28', gl && gl['当前价格'] === 38.28, gl && gl['当前价格']);
   eq('M3 applied 标记已存', w2.ghMarketAppliedGet(), MARKET.updated);
