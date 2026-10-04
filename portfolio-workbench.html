@@ -2150,7 +2150,7 @@ function ghFlattenProps(props){
   return o;
 }
 function ghB64(str){ return btoa(unescape(encodeURIComponent(str))); }
-function ghUnb64(b64){ return decodeURIComponent(escape(atob(String(b64).replace(/\s/g, '')))); }
+function ghUnb64(b64){ return decodeURIComponent(escape(atob(String(b64).replace(/\s/g, '')))).replace(/^\uFEFF/, ''); }   /* ★ R71:剥转换器可能写入的 BOM */
 function ghFetch(url, opts){
   if (typeof fetch === 'function') return fetch(url, opts);
   return Promise.reject(new Error('当前浏览器不支持 fetch,无法使用 GitHub 数据源'));
@@ -2283,6 +2283,8 @@ function ghStateWrite(key, payload, ts){
         if (!cur) return res;
         var curBody = null;
         try { curBody = JSON.parse(cur.text); } catch (e) { curBody = null; }
+        /* ★ R71 修复:解析失败(如历史 BOM 文件)绝不能静默丢写 —— 带上远端 sha 直接覆盖 */
+        if (!curBody) return ghPutFile(ghStatePath(key), JSON.stringify(body, null, 1), '状态:' + key + '(覆盖坏文件)', cur.sha);
         var curTs = (curBody && curBody['更新时间']) || '', newTs = ts;
         if (String(curTs) > String(newTs)) return { ok: true, kept: 'remote' };
         return ghPutFile(ghStatePath(key), JSON.stringify(body, null, 1), '状态:' + key + '(重试)', cur.sha);
