@@ -182,7 +182,7 @@ function clickAct(w, act, id){
   await flush(200);
   ok('D5 ★ 剪贴板被写入', CLIP.length === 1, CLIP.length);
   const txt = CLIP[0] || '';
-  ok('D5 标题含 日期与作战简报', txt.indexOf('作战简报') >= 0 && txt.indexOf('2026-10-04') >= 0);
+  ok('D5 标题含 作战简报与当日日期(日期无关断言,防日期滚动)', txt.indexOf('作战简报') >= 0 && txt.indexOf(w1.dateStr(w1.todayISO())) >= 0, txt.slice(0, 120));
   ok('D5 含档位分段(今日可买/等回落/减仓档)', txt.indexOf('今日可买') >= 0 && txt.indexOf('等回落') >= 0 && txt.indexOf('减仓档') >= 0);
   ok('D5 含标的行(工商银行 8.13)', txt.indexOf('工商银行 8.13') >= 0, txt.slice(0, 300));
   ok('D5 含资金与股息摘要', txt.indexOf('组合市值') >= 0 && txt.indexOf('本年股息') >= 0);
