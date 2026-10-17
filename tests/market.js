@@ -8,6 +8,10 @@
      M4 已应用 → 再检查不重复提示
      M5 轮询感知行情目录变化 → 提示条重现(新快照)
      M6 快照里无匹配标的 → 不误提示
+     M7 全自动(默认开)：新快照到达即自动应用 + 留痕可撤销
+     M8 撤销：价格与指标回滚到应用前
+     M9 手动模式条上「开自动」→ 立即自动应用
+     M10 应用失败 → 不标记已应用(下轮重试)，不假成功
    运行:node tests/market.js(mock fetch,无网络)
    ============================================================ */
 const { JSDOM } = require('jsdom');
@@ -102,6 +106,7 @@ function makeDom(files, token){
   const script = (function(h){var tags=[],re=/<script[^>]*>([\s\S]*?)<\/script>/g,m;while((m=re.exec(h))!==null)tags.push(m[1]);return tags.sort(function(a,b){return b.length-a.length;})[0];})(HTML);
   try { w.eval(script); } catch(e){}
   if (token) w.localStorage.setItem('dpb_gh_token', token);
+  w.localStorage.setItem('dpb_market_auto', '0');   /* R76：旧用例保持手动口径；自动用例见 M7-M10 显式置 '1' */
   return w;
 }
 const flush = function(ms){ return new Promise(function(r){ setTimeout(r, ms || 80); }); };
@@ -180,6 +185,58 @@ function barVisible(w){ const b = w.document.getElementById('marketBar'); return
   w3.bindGlobalDelegates(); w3.bootstrap();
   await flush(400);
   ok('M6 ★ 无匹配标的不出现提示条', !barVisible(w3), barText(w3));
+
+  console.log('\n【M7】全自动(默认开)：新快照自动应用');
+  const w4 = makeDom(Object.assign({}, base), 'github_pat_T');
+  w4.localStorage.setItem('dpb_market_auto', '1');      /* 默认开；空值也视为开(函数内兜底) */
+  w4.bindGlobalDelegates(); w4.bootstrap();
+  await flush(800);
+  const cp4 = w4.findByName('长江电力');
+  ok('M7 ★ 自动应用：长电价格 28.10 → 28.54', cp4 && cp4['当前价格'] === 28.54, cp4 && cp4['当前价格']);
+  ok('M7 ★ MA/RSI/股息TTM 一并写入', cp4 && cp4['MA20'] === 28.31 && cp4['RSI14'] === 55.85 && cp4['每股股息TTM'] === 0.9989);
+  eq('M7 applied 标记已存', w4.ghMarketAppliedGet(), MARKET.updated);
+  ok('M7 ★ 留痕可撤销(lastauto 含旧价 28.10)', (w4.ghMarketLastAutoGet() || {}).prev && w4.ghMarketLastAutoGet().prev[0].price === 28.10);
+  ok('M7 ★ 顶部显示已自动应用 + 撤销/关自动', barVisible(w4) && barText(w4).indexOf('已自动应用') >= 0 && !!w4.document.getElementById('mktUndo'), barText(w4));
+
+  console.log('\n【M8】撤销自动应用');
+  w4.document.getElementById('mktUndo').dispatchEvent(new w4.Event('click', { bubbles: true, cancelable: true }));
+  await flush(600);
+  const cp4b = w4.findByName('长江电力');
+  ok('M8 ★ 价格回滚到 28.10', cp4b && cp4b['当前价格'] === 28.10, cp4b && cp4b['当前价格']);
+  ok('M8 ★ MA20 回滚(原为空→不写,保持无值或原值)', cp4b['MA20'] === 28.31 || cp4b['MA20'] === null || cp4b['MA20'] === undefined, String(cp4b['MA20']));
+  eq('M8 留痕已清', w4.ghMarketLastAutoGet(), null);
+  ok('M8 提示条已隐藏', !barVisible(w4), barText(w4));
+
+  console.log('\n【M9】手动模式 → 条上「开自动」即应用');
+  const w5 = makeDom(Object.assign({}, base), 'github_pat_T');   /* makeDom 内置 auto=0 */
+  w5.bindGlobalDelegates(); w5.bootstrap();
+  await flush(400);
+  ok('M9 前置：手动提示条 + 开自动按钮', barVisible(w5) && !!w5.document.getElementById('mktAuto'), barText(w5));
+  w5.document.getElementById('mktAuto').dispatchEvent(new w5.Event('click', { bubbles: true, cancelable: true }));
+  await flush(800);
+  const cp5 = w5.findByName('长江电力');
+  ok('M9 ★ 点「开自动」后立即应用 28.54', cp5 && cp5['当前价格'] === 28.54, cp5 && cp5['当前价格']);
+  eq('M9 开关已置为开', w5.ghMarketAutoGet(), '1');
+
+  console.log('\n【M10】应用失败 → 不假成功(下轮自动重试)');
+  const w6 = makeDom(Object.assign({}, base), 'github_pat_T');
+  w6.localStorage.setItem('dpb_market_auto', '1');
+  w6.bindGlobalDelegates(); w6.bootstrap();
+  await flush(800);
+  eq('M10 前置：第一轮已成功应用', w6.ghMarketAppliedGet(), MARKET.updated);
+  /* 换新快照(模拟 Action 再次提交) + 让写入失败 */
+  const files3 = Object.assign({}, base);
+  const mkt3 = JSON.parse(JSON.stringify(MARKET));
+  mkt3.updated = '2026-10-06';
+  mkt3.items['600900.SH'].price = 30.00;
+  files3['data/market/latest.json'] = JSON.stringify(mkt3);
+  makeGhMock(w6, files3);
+  w6.db.updateRecord = function(){ return Promise.reject(new Error('net down')); };
+  w6.ghMarketCheck();
+  await flush(500);
+  const cp6 = w6.findByName('长江电力');
+  ok('M10 ★ 写入失败 → 价格不被改成 30.00', cp6 && cp6['当前价格'] === 28.54, cp6 && cp6['当前价格']);
+  eq('M10 ★ 不标记新快照已应用(下次检查自动重试)', w6.ghMarketAppliedGet(), MARKET.updated);
 
   console.log('\n──── R72 结果 ────');
   console.log('PASS ' + PASS + ' / FAIL ' + FAIL);

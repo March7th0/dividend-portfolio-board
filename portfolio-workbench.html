@@ -97,6 +97,9 @@ a{color:var(--ac)}
 #marketBar .mbar .mapply{margin-left:auto;background:var(--dark);color:var(--darktx);border:none;
   border-radius:8px;padding:6px 12px;font-size:12.5px;cursor:pointer;font-weight:600}
 #marketBar .mbar .mapply:hover{opacity:.88}
+/* R76：自动应用的撤销/开关按钮（描边款，与实心的「一键应用」区分） */
+#marketBar .mbar .mauto,#marketBar .mbar .mundo{margin-left:8px;background:transparent;color:var(--ac);border:1px solid var(--ac);border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;font-family:inherit}
+#marketBar .mbar .mauto:hover,#marketBar .mbar .mundo:hover{background:var(--acbg)}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--tx3);flex:0 0 auto}
 .dot.ok{background:var(--dn)} .dot.load{background:var(--br)} .dot.off{background:#c2c8d4}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -1155,6 +1158,7 @@ table.card{min-width:0}
           <table data-page-node-id="IaRxQctSa9Mem3j4Hc4wzQ">
             <thead data-page-node-id="tA8ag5wDOuKT58C0Mcbo0u"><tr data-page-node-id="SYxSrEd7ZB5hJ89ROG7hOs"><th data-page-node-id="GeanseokRWq77e7uxnU7y6"><!--pnid:lHOL53FIljaxpxRrNV0bZ4-->版本</th><th data-page-node-id="GL8o43Wixj4JSUYeBWMYpw"><!--pnid:pBHEyFOfZNm2TZR1Pwceoz-->日期</th><th data-page-node-id="FfxdIU1WiDb3mzf1ZNMI7M"><!--pnid:PLBycId50aZwREjpbrvphP-->改了什么</th></tr></thead>
             <tbody data-page-node-id="YVT4xzsoVz76Dpjlz1Rddq">
+              <tr><td class="mono">v62</td><td class="tiny">2026-10-17</td><td class="tiny"><b>行情全自动应用</b>：新快照到达即自动写入（默认开），顶部显示「已自动应用 + 撤销/关自动」；写失败不标记已应用、下轮自动重试，不假成功</td></tr>
               <tr><td class="mono">v61</td><td class="tiny">2026-10-17</td><td class="tiny"><b>PWA 可安装化（Phase 1）</b>：GitHub Pages 版可「安装到主屏幕/桌面」——独立图标、全屏、离线秒开；安装引导条（iOS 手动指引）；WB 内嵌自动跳过</td></tr>
               <tr><td class="mono">v60</td><td class="tiny">2026-10-04</td><td class="tiny"><b>股息率TTM</b>（腾讯行情自动字段）：看板/明细双显示，A股[64]/港股[47]，快照口径验证过</td></tr>
               <tr><td class="mono">v59</td><td class="tiny">2026-10-04</td><td class="tiny"><b>股息账本</b>（本年/累计/股息率/TOP5 + 记一笔）+ 顶栏「📋简报」一键作战简报（复制即分享）</td></tr>
@@ -1319,7 +1323,7 @@ var DATABASE_ID = 'RZJijiIkrKlwRQExwHjH0y';
    用途：用户与开发者能「当场对齐」看到的是哪一版。
    之前几轮反复出现「我这边测好了 / 你那边依旧无效」的拉扯，
    根因之一就是无法确认双方在看同一版代码 —— 有了这个标签，一句话就能定位。 */
-var APP_VER = 'v61 · R75 · 2026-10-17';
+var APP_VER = 'v62 · R76 · 2026-10-17';
 var F = {
   name:'标的名称', code:'代码', btype:'企业类型', tier:'组合层级',
   divTtm:'每股股息TTM',   /* ★ R74:税前每股股息(TTM),行情 Action 写入;显示时 ÷ 当前价格 = 股息率TTM */
@@ -2647,6 +2651,47 @@ function ghBtnSync(){
    → updateRecord 逐条写入(经适配器合并队列 = 一次提交)。应用记录存 localStorage。 */
 function ghMarketAppliedGet(){ try { return localStorage.getItem('dpb_market_applied') || ''; } catch(e){ return ''; } }
 function ghMarketAppliedSet(v){ try { localStorage.setItem('dpb_market_applied', v); } catch(e){} }
+/* ★ R76 全自动应用：开关（默认开，用户明确要求全自动）+ 上一版留痕（撤销用） */
+function ghMarketAutoGet(){ try { var v = localStorage.getItem('dpb_market_auto'); return (v === null || v === '') ? '1' : v; } catch(e){ return '1'; } }
+function ghMarketAutoSet(v){ try { localStorage.setItem('dpb_market_auto', v); } catch(e){} }
+function ghMarketLastAutoGet(){ try { return JSON.parse(localStorage.getItem('dpb_market_lastauto') || 'null'); } catch(e){ return null; } }
+function ghMarketLastAutoSet(o){ try { localStorage.setItem('dpb_market_lastauto', JSON.stringify(o)); } catch(e){} }
+/* 渲染「已自动应用」确认条(幂等：loadAll 后的重新检查也走这里，撤销入口不丢) */
+function ghMarketShowAutoBar(updated, n){
+  var b2 = $('marketBar');
+  if (!b2) return;
+  b2.innerHTML = sanitizeHtml(
+    '<div class="mbar"><b>✅ 已自动应用行情 ' + esc(updated) + '</b>' +
+    '<span>' + n + ' 只 · 价格/MA/RSI/股息TTM 已更新</span>' +
+    '<button class="mundo" id="mktUndo" type="button" title="把价格与指标恢复成这一版之前">撤销</button>' +
+    '<button class="mauto" id="mktAutoOff" type="button" title="以后改为手动确认">关自动</button></div>');
+  b2.style.display = 'block';
+  var ub = $('mktUndo');
+  if (ub) ub.onclick = ghMarketUndo;
+  var ob = $('mktAutoOff');
+  if (ob) ob.onclick = function(){ ghMarketAutoSet('0'); ghMarketHide(); toast('已关闭自动应用（改回手动确认）'); };
+}
+/* 撤销上一轮自动应用：把留痕的旧值写回（只回滚被自动应用改过的字段） */
+function ghMarketUndo(){
+  var la = ghMarketLastAutoGet();
+  if (!la || !la.prev || !la.prev.length){ toast('没有可撤销的自动应用记录', true); return; }
+  var jobs = [];
+  for (var i = 0; i < la.prev.length; i++){
+    var p = la.prev[i], props = { '最近更新': { date: todayISO() } };
+    if (p.price !== null && p.price !== undefined) props['当前价格'] = { number: p.price };
+    if (p.ma20 !== null && p.ma20 !== undefined) props['MA20'] = { number: p.ma20 };
+    if (p.ma60 !== null && p.ma60 !== undefined) props['MA60'] = { number: p.ma60 };
+    if (p.rsi14 !== null && p.rsi14 !== undefined) props['RSI14'] = { number: p.rsi14 };
+    if (p.divTtm !== null && p.divTtm !== undefined) props[F.divTtm] = { number: p.divTtm };
+    jobs.push(db.updateRecord({ databaseId: DATABASE_ID, recordId: p.rid, properties: props }));
+  }
+  Promise.all(jobs).then(function(){
+    ghMarketLastAutoSet(null);
+    ghMarketHide();
+    toast('已撤销 ' + la.updated + ' 的自动应用（价格与原有指标已回滚）');
+    loadAll(null, null, 0, { skipState: true });
+  }, function(){ toast('撤销失败：请检查网络后重试', true); });
+}
 function ghMarketHide(){ var b = $('marketBar'); if (b){ b.style.display = 'none'; b.innerHTML = ''; } }
 function ghMarketCheck(){
   if (DATA_MODE !== 'gh'){ ghMarketHide(); return; }
@@ -2655,7 +2700,13 @@ function ghMarketCheck(){
     var snap = null;
     try { snap = JSON.parse(t); } catch(e){ ghMarketHide(); return; }
     if (!snap || !snap.updated || !snap.items){ ghMarketHide(); return; }
-    if (ghMarketAppliedGet() === snap.updated){ ghMarketHide(); return; }
+    if (ghMarketAppliedGet() === snap.updated){
+      /* ★ R76：已应用过本轮快照——若刚才是自动应用的，幂等重显确认条(撤销入口不能因
+         loadAll 触发的重新检查而被清掉)；无留痕(手动用过/已撤销)才隐藏 */
+      var la0 = ghMarketLastAutoGet();
+      if (la0 && la0.updated === snap.updated){ ghMarketShowAutoBar(snap.updated, la0.n || 0); return; }
+      ghMarketHide(); return;
+    }
     var total = 0, changes = 0;
     for (var k in snap.items){
       if (!Object.prototype.hasOwnProperty.call(snap.items, k)) continue;
@@ -2666,21 +2717,35 @@ function ghMarketCheck(){
       if (num(r['当前价格']) !== num(snap.items[k].price)) changes++;
     }
     if (!changes){ ghMarketAppliedSet(snap.updated); ghMarketHide(); return; }   /* 价格无差异 = 已应用 */
+    /* ★ R76：全自动模式 → 直接应用（页面打开时自动发生；没开页面则下次打开自动补上） */
+    if (ghMarketAutoGet() === '1'){ ghMarketApply(true); return; }
     var b = $('marketBar');
     if (!b) return;
     b.innerHTML = sanitizeHtml(
       '<div class="mbar"><b>📈 行情快照 ' + esc(snap.updated) + '</b>' +
       '<span>' + total + ' 只 · 含 MA20/MA60/RSI14/股息率TTM · 其中 ' + changes + ' 只价格有变化</span>' +
+      '<button class="mauto" id="mktAuto" type="button" title="以后自动应用，不再手动确认">开自动</button>' +
       '<button class="mapply" id="mktApply" type="button">一键应用</button></div>');
     b.style.display = 'block';
     var btn = $('mktApply');
-    if (btn) btn.onclick = ghMarketApply;
+    if (btn) btn.onclick = function(){ ghMarketApply(false); };   /* ★ R76：包一层，防止事件对象被当 auto 参数 */
+    var ab = $('mktAuto');
+    if (ab) ab.onclick = function(){ ghMarketAutoSet('1'); ghMarketCheck(); };
   }, function(){ ghMarketHide(); });
 }
-function ghMarketApply(){
+function ghMarketApply(auto){
   ghGetRaw('data/market/latest.json').then(function(t){
     var snap = JSON.parse(t);
     if (!snap || !snap.items) return;
+    /* ★ R76：先留痕旧值（撤销用），再写新值 */
+    var prev = [];
+    for (var pi = 0; pi < RECORDS.length; pi++){
+      var pr = RECORDS[pi];
+      if (!snap.items[(pr['代码'] || '')]) continue;
+      prev.push({ rid: pr._id,
+        price: num(pr['当前价格']), ma20: num(pr['MA20']), ma60: num(pr['MA60']),
+        rsi14: num(pr['RSI14']), divTtm: (F.divTtm ? num(pr[F.divTtm]) : null) });
+    }
     var jobs = [], n = 0;
     for (var i = 0; i < RECORDS.length; i++){
       var r = RECORDS[i];
@@ -2697,9 +2762,14 @@ function ghMarketApply(){
     if (!n){ toast('行情快照里没有匹配的标的', true); return; }
     Promise.all(jobs).then(function(){
       ghMarketAppliedSet(snap.updated);
-      toast('已应用行情快照 ' + snap.updated + '(' + n + ' 只,含 MA/RSI)');
+      if (auto){
+        /* 全自动路径：留痕 + 顶部显示「已自动应用 + 撤销/关自动」 */
+        ghMarketLastAutoSet({ updated: snap.updated, ts: new Date().toISOString(), n: n, prev: prev });
+        ghMarketShowAutoBar(snap.updated, n);
+      }
+      toast((auto ? '已自动应用' : '已应用') + '行情快照 ' + snap.updated + '(' + n + ' 只,含 MA/RSI)');
       loadAll(null, null, 0, { skipState: true });
-      ghMarketHide();
+      if (!auto) ghMarketHide();
     }, function(e){
       toast('行情应用失败:' + ((e && e.message) || '请稍后重试'), true);
     });
