@@ -62,14 +62,21 @@ console.log('\n【W4】图标文件');
   ok('W4 ★ ' + f + ' 是合法 PNG', !!head && head.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])));
 });
 
-/* ══ W5 白名单 ══ */
+/* ══ W5 白名单（仅私有仓语境有效；公开仓白名单外无 tools/，预期跳过） ══ */
 console.log('\n【W5】sync_public 白名单');
-var ps1 = fs.readFileSync(path.join(ROOT, 'tools', 'sync_public.ps1'), 'utf8');
-ok('W5 ★ 白名单含 manifest.webmanifest', ps1.indexOf("'manifest.webmanifest'") >= 0);
-ok('W5 ★ 白名单含 sw.js', ps1.indexOf("'sw.js'") >= 0);
-ok('W5 ★ 白名单含 tools\\icons', ps1.indexOf('tools\\icons') >= 0);
-ok('W5 ★ ps1 仍是 UTF-8 BOM（硬约定⑤）',
-   fs.readFileSync(path.join(ROOT, 'tools', 'sync_public.ps1')).slice(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])));
+var ps1Path = path.join(ROOT, 'tools', 'sync_public.ps1');
+if (fs.existsSync(ps1Path)){
+  var ps1 = fs.readFileSync(ps1Path, 'utf8');
+  ok('W5 ★ 白名单含 manifest.webmanifest', ps1.indexOf("'manifest.webmanifest'") >= 0);
+  ok('W5 ★ 白名单含 sw.js', ps1.indexOf("'sw.js'") >= 0);
+  ok('W5 ★ 白名单含 tools\\icons', ps1.indexOf('tools\\icons') >= 0);
+  ok('W5 ★ ps1 仍是 UTF-8 BOM（硬约定⑤）',
+     fs.readFileSync(ps1Path).slice(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])));
+} else {
+  /* ★ R77：公开仓没有 tools/（白名单不含）——CI 上此断言无意义，跳过而非崩溃。
+     R75/R76 两次公开仓 CI 红就是因为这里 readFileSync 直接抛 ENOENT。 */
+  ok('W5 公开仓环境（无 tools/，白名单断言按预期跳过）', true);
+}
 
 /* ══ W6 运行时行为 ══ */
 console.log('\n【W6】安装引导运行时');
